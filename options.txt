@@ -1,0 +1,19 @@
+文件io without concurrency control、(pysql?)
+
+client files local searching and cached (on disk)
+
+consistency on multiple machines
+
+multiple users to read/write files concurrently (file locks)
+
+local testing for multiple process to simulate multiple nodes (commands, examples, result videos)
+
+cache update algorithms 
+
+flow control algorithms
+
+yiqiao: 
+2 3 6 7 
+
+zihong:
+1 4 5
