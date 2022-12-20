@@ -1,6 +1,9 @@
 1. client files local searching and cached (on disk)
 cache update algorithms (both server and client)
 
+consider using Redis as local cache
+python redis library!
+
 2. consistency on multiple machines 
 (paxos/raft, paxos chose)
 Preliminary:
