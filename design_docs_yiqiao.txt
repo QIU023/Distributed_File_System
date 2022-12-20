@@ -1,9 +1,45 @@
-client files local searching and cached (on disk)
+1. client files local searching and cached (on disk)
 cache update algorithms (both server and client)
 
 2. consistency on multiple machines 
-(paxos)
-
+(paxos/raft, paxos chose)
+Preliminary:
+    one main Proposer chose
+    Learner: seems not used in our system (accepting the value agreed by the Acceptor) 
+    Proposer(N,V)
+    Acceptor(ResN, AcceptN, AcceptV)
+Stage 1:
+    Proposer:
+        send prepare(id:N) to Acceptor
+    Acceptor:
+        N <= ResN:
+            error / ignore
+        N > ResN:
+            ResN = N
+            response: 
+                (Pok, AcceptN, AcceptV) or (Pok, null, null)
+                
+Stage 2:
+    Proposer:
+        sum(Pok) > num_node / 2:
+            if received AcceptV:
+                V = AcceptV of argmax_N{AcceptN}
+            else (all is null):
+                V = ProposerV
+            send accept(N,V)
+        sum(Pok) <= num_node / 2:
+            return to Stage 1
+    Acceptor:
+        N > ResN:
+            Accept, AcceptN = N, AcceptV = V, response: Aok
+        N <= ResN:
+            error / ignore
+    ----------------------------
+    Proposer:
+        sum(Aok) > num_node / 2:
+            confirmed V is chose
+        sum(Aok) <= num_node / 2:
+            return to Stage 1
 
 
 3. flow control algorithms 
