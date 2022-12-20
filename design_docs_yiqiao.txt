@@ -1,0 +1,31 @@
+client files local searching and cached (on disk)
+cache update algorithms (both server and client)
+
+2. consistency on multiple machines 
+(paxos)
+
+
+
+3. flow control algorithms 
+(client access control)
+
+on the basis of workload balancing algorithms:
+previous algorithm:
+    download: 
+        weights for each node, init to 0
+        effective weight:
+            node abnormality: weight--
+            normally called: weight++
+        configured weight
+        total weight update rule:
+            weight_c_i+1 = weight_c_i - sum_j(weight_j_i)
+    upload: 
+        original algorithm: 
+            depend on the number of files of each node (not applicable)
+
+        my upgrade to flow control:
+            compute each node's ping timestamp with the client
+                distributed to smaller distance nodes
+            get the access flow information of each node 
+                distributed to lower accessed nodes
+                (equal access number for each node)

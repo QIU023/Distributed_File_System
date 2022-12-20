@@ -1,11 +1,11 @@
 yiqiao:
 client files local searching and cached (on disk)
 
-consistency on multiple machines
+consistency on multiple machines (paxos)
 
-cache update algorithms 
+cache update algorithms (both server and client)
 
-flow control algorithms
+flow control algorithms (client access control)
 
 zihong:
 
