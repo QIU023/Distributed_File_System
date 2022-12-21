@@ -4,6 +4,10 @@ cache update algorithms (both server and client)
 consider using Redis as local cache
 python redis library!
 
+in conclusion: 
+    write/read operation for the cache directory is changed to the
+    write/read operation for the redis cache database
+
 2. consistency on multiple machines 
 (paxos/raft, paxos chose)
 Preliminary:
