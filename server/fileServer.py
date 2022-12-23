@@ -1,6 +1,3 @@
-# FileServer.py
-# Project CS4032
-# Cathal Geoghegan
 
 import socket
 import os

@@ -1,6 +1,3 @@
-# LockServer.py
-# Project CS4032
-# Cathal Geoghegan
 
 import socket
 import re
@@ -15,7 +12,7 @@ from tcpServer import TCPServer
 class LockServer(TCPServer):
     LOCK_REGEX = "LOCK_FILE: [a-zA-Z0-9_./]*\nTime: [0-9]*\n\n"
     UNLOCK_REGEX = "UNLOCK_FILE: [a-zA-Z0-9_./]*\n\n"
-    LOCK_RESPONSE = "LOCK_RESPONSE: \nFILENAME: %s\nTIME: %d\n\n"
+    LOCK_RESPONSE = "LOCK_RESPONSE: \nLOCK_TYPE: \nFILENAME: %s\nTIME: %d\n\n"
     FAIL_RESPONSE = "ERROR: %d\nMESSAGE: %s\n\n"
     DATABASE = 'Database/locking.db'
 
@@ -37,10 +34,12 @@ class LockServer(TCPServer):
         # Handler for file locking requests
         request = text.splitlines()
         full_path = request[0].split()[1]#获取目标路径
-        duration = int(request[1].split()[1])#获取时间
-        lock_time = self.lock_file(full_path, duration)
+        lock_type = request[1].split()[1]#锁类型：互斥/兼容/...
+        duration = int(request[2].split()[1])#获取时间
+
+        lock_time = self.lock_file(full_path, lock_type, duration)
         if lock_time:
-            return_string = self.LOCK_RESPONSE % (full_path, lock_time)
+            return_string = self.LOCK_RESPONSE % (full_path, lock_type, lock_time)
         else:
             return_string = self.FAIL_RESPONSE % (0, str(duration))
         con.sendall(return_string)
@@ -50,19 +49,20 @@ class LockServer(TCPServer):
         # Handler for file unlocking requests
         request = text.splitlines()
         full_path = request[0].split()[1]
-        lock_time = self.unlock_file(full_path)
+        lock_type = request[1].split()[1]#锁类型：互斥/兼容/...
+        lock_time = self.unlock_file(full_path, lock_type)
 
-        return_string = self.LOCK_RESPONSE % (full_path, lock_time)
+        return_string = self.LOCK_RESPONSE % (full_path, lock_type, lock_time)
         con.sendall(return_string)
         return
 
-    def lock_file(self, path, lock_period):
+    def lock_file(self, path, lock_type, lock_period):
         # Function that attempts to lock a file
         return_time = -1
         con = db.connect(self.DATABASE)
         # Exclusive r/w access to the db
-        con.isolation_level = 'EXCLUSIVE'
-        con.execute('BEGIN EXCLUSIVE')
+        con.isolation_level = lock_type
+        con.execute('BEGIN {}'.format(lock_type))
         current_time = int(time.time())
         end_time = current_time + lock_period
 
@@ -79,13 +79,13 @@ class LockServer(TCPServer):
         con.close()
         return return_time
 
-    def unlock_file(self, path):
+    def unlock_file(self, lock_type, path):
         # Function that attempts to unlock a file
         return_time = -1
         con = db.connect(self.DATABASE)
         # Exclusive r/w access to the db
-        con.isolation_level = 'EXCLUSIVE'
-        con.execute('BEGIN EXCLUSIVE')
+        con.isolation_level = lock_type
+        con.execute('BEGIN {}'.format(lock_type))
         current_time = int(time.time())
         cur = con.cursor()
         cur.execute("SELECT count(*) FROM Locks WHERE Path = ? AND Time > ?", (path, current_time))
@@ -114,8 +114,8 @@ def main():
         else:
             server = LockServer()
         server.listen()
-    except socket.error, msg:
-        print "Unable to create socket connection: " + str(msg)
+    except socket.error as msg:
+        print("Unable to create socket connection: " + str(msg))
         con = None
 
 

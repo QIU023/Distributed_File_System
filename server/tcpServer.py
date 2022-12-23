@@ -1,10 +1,7 @@
-# TCPServer.py
-# Project CS4032
-# Cathal Geoghegan
 
 import socket
 import threading
-import Queue
+import queue
 import os
 import re
 import sys
@@ -28,7 +25,7 @@ class TCPServer(object):
         self.sock.bind((self.HOST, port_use))
         self.handler = handler if handler else self.default_handler
         # Create a queue of tasks with ma
-        self.threadQueue = Queue.Queue(maxsize=self.MAX_THREAD)
+        self.threadQueue = queue.Queue(maxsize=self.MAX_THREAD)
 
         # Create thread pool
         for i in range(self.MAX_THREAD):
