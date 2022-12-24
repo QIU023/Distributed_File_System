@@ -4,6 +4,11 @@ cache update algorithms (both server and client)
 consider using Redis as local cache
 python redis library!
 
+缓存文件淘汰算法，
+读写锁区分以及函数对应的逻辑，
+多个server的一致性paxos实现，
+访问服务器的负载均衡算法/流量管理算法
+
 in conclusion: 
     write/read operation for the cache directory is changed to the
     write/read operation for the redis cache database

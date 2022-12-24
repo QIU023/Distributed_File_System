@@ -8,6 +8,8 @@ import time
 import queue
 import base64
 
+from LRU_cache import TwoQueue_Cache
+
 # 与服务器交流用的指令的正则表达式
 UPLOAD_REGEX = "upload [a-zA-Z0-9_]*."
 DOWNLOAD_REGEX = "download [a-zA-Z0-9_]*."
@@ -27,7 +29,7 @@ class TCPClient:
     # redis 缓存的参数：端口号、密码、设置的大小（64MB）
     LOCAL_REDIS_PORT = 8008
     LOCAL_REDIS_PASSWD = "aaaaaaaa"
-    LOCAL_CACHE_LIMIT = 2**14
+    LOCAL_CACHE_LIMIT = 2**24
 
     # 本地文件加锁次数上限
     LOCK_TRY_MAX_TIME = 10
@@ -63,7 +65,8 @@ class TCPClient:
             self.port_use = port_use
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.open_files = {}
-        self.cache = {}
+        self.cache_info = TwoQueue_Cache()
+        self.cache_used_size = 0
         self.threadQueue = queue.Queue()
 
         self.local_redis_conn = redis.Redis(host = '127.0.0.1', port = self.LOCAL_REDIS_PORT, password=self.LOCAL_REDIS_PASSWD, db = 0)
@@ -71,9 +74,24 @@ class TCPClient:
     def get_file_info(self, file_istream):
         return {
             'access_time': 1,
+            'create_time_stamp': time.time(),
             'access_time_stamp': time.time(),
-            'size': file_istream.__sizeof__()
+            'size': file_istream.__sizeof__() # bytes ->
         }
+
+    def write_cache(self, filename, data):
+        pop_name = self.cache_info.put(filename,self.__get_file_info(data))
+        self.local_redis_conn.set(filename, data)
+        if pop_name is not None:
+            self.local_redis_conn.delete(pop_name)
+
+    def read_cache(self, filename):
+        data = self.local_redis_conn.get(filename)
+        info_dict = self.cache_info.get(filename)
+        info_dict['access_time'] += 1
+        info_dict['access_time_stamp'] = time.time()
+        return data
+
 
     # 为了对应缓存，因此需要修改，先访问缓存
     def open(self, filename, access_type):
@@ -82,7 +100,7 @@ class TCPClient:
         file_downloaded = False
         if filename not in self.open_files.keys():
             #这里补充：不在缓存才去下载
-            if filename not in self.cache.keys():
+            if filename not in self.cache_info.keys():
                 # Get the info of the server hosting the file, 
                 # 涉及server分配策略！cdn负载均衡算法
                 request = self.__get_directory(filename)
@@ -97,16 +115,12 @@ class TCPClient:
                     if file_downloaded:
                         # print("getting file from the server!")
                         self.open_files[filename] = open_file
-                        self.cache[filename] = self.__get_file_info(data)
-                        self.local_redis_conn.set(filename, data)
+                        self.write_cache(filename, data)
                 else:
                     data = None
                     # print("server connection error!")
             else:
                 # print("file found in local cache!")
-                data = self.local_redis_conn.get(filename)
-                self.cache[filename]['access_time'] += 1
-                self.cache[filename]['access_time_stamp'] = time.time()
                 # file_downloaded = True
         else:
             data = None
