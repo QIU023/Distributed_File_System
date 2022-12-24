@@ -80,21 +80,29 @@ class TCPClient:
         }
 
     def write_cache(self, filename, data):
-        pop_name = self.cache_info.put(filename,self.__get_file_info(data))
-        self.local_redis_conn.set(filename, data)
-        if pop_name is not None:
-            self.local_redis_conn.delete(pop_name)
+        pop_name = self.cache_info.put(filename,self.get_file_info(data))
+        self.update_redis_cache(pop_name, filename, data, is_read=False)
 
     def read_cache(self, filename):
         data = self.local_redis_conn.get(filename)
-        info_dict = self.cache_info.get(filename)
-        info_dict['access_time'] += 1
-        info_dict['access_time_stamp'] = time.time()
+        pop_name = self.cache_info.get(filename)
+        self.update_redis_cache(pop_name, filename, data, is_read=True)
+
         return data
+
+    def update_redis_cache(self, pop_name, filename, data, is_read=False):
+        if pop_name is not None:
+            # cache 淘汰旧值，插入新值，适用于r/w
+            self.local_redis_conn.delete(pop_name)
+            self.local_redis_conn.set(filename, data)
+        else:
+            # cache 更新已有值, 适用于write
+            if not is_read:
+                self.local_redis_conn.getset(filename,data)
 
 
     # 为了对应缓存，因此需要修改，先访问缓存
-    def open(self, filename, access_type):
+    def open(self, filename, access_type='read'):
         # 缓存机制
         """Function opens a file by downloading from a remote server"""
         file_downloaded = False
@@ -116,42 +124,49 @@ class TCPClient:
                         # print("getting file from the server!")
                         self.open_files[filename] = open_file
                         self.write_cache(filename, data)
+                    # return file_downloaded
                 else:
-                    data = None
+                    file_downloaded = False
                     # print("server connection error!")
             else:
+                file_downloaded = True
                 # print("file found in local cache!")
-                # file_downloaded = True
-        else:
-            data = None
+                # data = self.read_cache(filename)
             # ????
+        else:
+            file_downloaded = True
             # print("file already opened!")  
                 
-        return data
+        return file_downloaded
 
-    def close(self, filename):
-        """Function closes a file by uploading it and removing the local copy"""
+    def close(self, filename, access_type='read'):
+        """Function closes a file by uploading it, update cache and removing the local opening"""
         file_uploaded = False
         if filename in self.open_files.keys():
             request = self.__get_directory(filename)
             if re.match(self.SERVER_RESPONSE, request):
                 # Remove lock from file
-                self.__unlock_file(filename)
-                params = request.splitlines()
-                server = params[0].split()[1]
-                open_file = params[2].split()[1]
-                # Upload the file and
-                file_uploaded = self.__upload_file(server, open_file)
-                if file_uploaded:
-                    path = os.path.join(self.CLIENT_ROOT, self.BUCKET_NAME)
-                    path = os.path.join(path, self.open_files[filename])
-                    '''
-                    不删，用作缓存
-                    if os.path.exists(path):
-                        os.remove(path)
-                    '''
-                    del self.open_files[filename]
-                
+                if access_type == 'read':
+                    self.__unlock_file(filename)
+                elif access_type == 'write':
+                    params = request.splitlines()
+                    server = params[0].split()[1]
+                    open_file = params[2].split()[1]
+                    # Upload the file and
+                    file_uploaded = self.__upload_file(server, open_file)
+                    if file_uploaded:
+                        # path = os.path.join(self.CLIENT_ROOT, self.BUCKET_NAME)
+                        # path = os.path.join(path, self.open_files[filename])
+
+                        data = self.read(filename)
+                        self.write_cache(filename, data)
+                        '''
+                        不删，用作缓存
+                        if os.path.exists(path):
+                            os.remove(path)
+                        '''
+                        del self.open_files[filename]
+                    
                 
         return file_uploaded
 
@@ -262,9 +277,9 @@ class TCPClient:
             return not re.match(self.FAIL_RESPONSE, request_data)
 
     # 解锁
-    def __unlock_file(self, filename):
+    def __unlock_file(self, filename, lock_type):
         """Send a request to the server to unlock a file"""
-        request = self.UNLOCK_HEADER % filename
+        request = self.UNLOCK_HEADER % (filename, lock_type)
         return self.__send_request(request, self.LOCK_HOST, self.LOCK_PORT)
 
     # 判断文件名是否已经重名

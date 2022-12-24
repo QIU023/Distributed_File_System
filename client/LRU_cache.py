@@ -1,5 +1,6 @@
 
 from collections import OrderedDict
+import time
 
 class TwoQueue_Cache:
  
@@ -13,13 +14,15 @@ class TwoQueue_Cache:
 
     def get(self, key: str):
         if key not in self.lru_queue and key not in self.fifo_queue:
-            return None, None
+            return None
         else: 
             pop_name = None
             if key in self.fifo_queue:
                 pop_name = self.move_from_fifo2lru(key)
             self.lru_queue.move_to_end(key)
-            return self.lru_queue[key], pop_name
+            self.lru_queue[key]['access_time'] += 1
+            self.lru_queue[key]['access_time_stamp'] = time.time()
+            return pop_name
 
     def move_from_fifo2lru(self, key):
         pop_name = None
@@ -33,6 +36,7 @@ class TwoQueue_Cache:
  
     def put(self, key: str, value):
         if key not in self.lru_queue and key not in self.fifo_queue:
+            # 插入新值
             self.fifo_queue[key] = value
             self.fifo_queue.move_to_end(key)
             pop_name = None
@@ -41,9 +45,12 @@ class TwoQueue_Cache:
             if self.fifo_size > 0.5*self.size_capacity:
                 pop_name, _ = self.fifo_queue.popitem(last = False)
             return pop_name
-        elif key in self.fifo_queue:
-            self.move_from_fifo2lru(key)
-            self.lru_queue[key] = value
-        elif key in self.lru_queue:
-            self.lru_queue[key] = value
-            self.lru_queue.move_to_end(key)
+        else:
+            if key in self.fifo_queue:
+            # 更新已有值
+                self.move_from_fifo2lru(key)
+            else:
+                self.lru_queue.move_to_end(key)
+            self.lru_queue[key]['access_time'] += 1
+            self.lru_queue[key]['access_time_stamp'] = time.time()
+            return None

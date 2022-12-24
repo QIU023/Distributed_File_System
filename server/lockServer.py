@@ -5,20 +5,27 @@ import sys
 import time
 import sqlite3 as db
 
-
+from collections import defaultdict
 from tcpServer import TCPServer
 
+lock_mapping_dict = {
+    'EXCLUSIVE': 3,
+    'RESERVED': 2,
+    'SHARED': 1,
+    'PENDING': 0
+}
 
 class LockServer(TCPServer):
     LOCK_REGEX = "LOCK_FILE: [a-zA-Z0-9_./]*\nTime: [0-9]*\n\n"
     UNLOCK_REGEX = "UNLOCK_FILE: [a-zA-Z0-9_./]*\n\n"
     LOCK_RESPONSE = "LOCK_RESPONSE: \nLOCK_TYPE: \nFILENAME: %s\nTIME: %d\n\n"
     FAIL_RESPONSE = "ERROR: %d\nMESSAGE: %s\n\n"
-    DATABASE = 'Database/locking.db'
+    # DATABASE = 'Database/locking.db'
 
     def __init__(self, port_use=None):
         TCPServer.__init__(self, port_use, self.handler)
         self.create_table()
+        self.lock_status_dict = defaultdict(list)
 
     #匹配正则表达式，确定操作上锁or解锁并调用函数
     def handler(self, message, con, addr):
@@ -59,22 +66,37 @@ class LockServer(TCPServer):
     def lock_file(self, path, lock_type, lock_period):
         # Function that attempts to lock a file
         return_time = -1
+        # lock_type: read/write
         con = db.connect(self.DATABASE)
-        # Exclusive r/w access to the db
-        con.isolation_level = lock_type
-        con.execute('BEGIN {}'.format(lock_type))
+
+        if lock_type == 'read':
+            con.isolation_level = 'SHARED'
+            con.execute('BEGIN PENDING')
+            con.execute('BEGIN SHARED')
+
+        elif lock_type == 'write':
+            con.isolation_level = 'EXCLUSIVE'
+            con.execute('BEGIN EXCLUSIVE')
+        else:
+            con.close()
+            return False
+            # print('lock_type Error!')
+            
         current_time = int(time.time())
         end_time = current_time + lock_period
-
+        '''
         cur = con.cursor()
+        # 找锁
         cur.execute("SELECT count(*) FROM Locks WHERE Path = ? AND Time > ?", (path, current_time))
         count = cur.fetchone()[0]
-        if count is 0:
+        if count == 0:
+            # 新锁
             cur.execute("INSERT INTO Locks (Path, Time) VALUES (?, ?)", (path, end_time))
             return_time = end_time
         else:
             return_time = False
-        # End Exclusive access to the db
+        '''
+        # End r/w access to the db
         con.commit()
         con.close()
         return return_time
@@ -92,11 +114,12 @@ class LockServer(TCPServer):
         count = cur.fetchone()[0]
         if count is 0:
             cur.execute("UPDATE Locks SET Time=? WHERE Path = ? AND Time > ?", (current_time, path, current_time))
-        # End Exclusive access to the db
+        # End r/w access to the db
         con.commit()
         con.close()
         return current_time
 
+    '''
     def create_table(cls):
         # Function that creates the tables for the locking servers database
         con = db.connect(cls.DATABASE)
@@ -104,8 +127,8 @@ class LockServer(TCPServer):
             cur = con.cursor()
             cur.execute("CREATE TABLE IF NOT EXISTS Locks(Id INTEGER PRIMARY KEY, Path TEXT, Time INT)")
             cur.execute("CREATE INDEX IF NOT EXISTS PATHS ON Locks(Path)")
-
-
+    '''
+    
 def main():
     try:
         if len(sys.argv) > 1 and sys.argv[1].isdigit():
