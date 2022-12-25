@@ -4,6 +4,7 @@ import os
 import re
 import sys
 import base64
+import time
 
 from tcpServer import TCPServer
 
@@ -20,11 +21,20 @@ class FileServer(TCPServer):
     BUCKET_NAME = "DirectoryServerFiles"
     BUCKET_LOCATION = os.path.join(SERVER_ROOT, BUCKET_NAME)
     DIR_HOST = "0.0.0.0"
-    DIR_PORT = 8005
+    DIR_PORT = 8005         # master/proposer's port
+
+    # paxos consistency message headers, for slaves / acceptor
+    PROPOSER_PREPARE_REGEX = "PROPOSER_PREPARE_N: [0-9_.]*\n\n"    
+    PROPOSER_ACCEPT_REGEX = "PROPOSER_ACCEPT_N: [0-9_.]*\n\nPROPOSER_ACCEPT_V: .*\n\n"
+    ACCEPTOR_POK_HEADER = "HOST: %s\n\nPORT: %s\n\nACCEPTOR_POK: %s\n\nACCEPTOR_ACCEPT_N: %d\n\n"
+    ACCEPTOR_AOK_HEADER = "HOST: %s\n\nPORT: %s\n\nACCEPTOR_AOK: %s\n\n"
+
+    SENDALL_DATA_TO_MASTER = "SENDALL_DATA_TO_MASTER\n\n"
 
     def __init__(self, port_use=None):
         TCPServer.__init__(self, port_use, self.handler)
         self.BUCKET_LOCATION = os.path.join(self.BUCKET_LOCATION, str(self.PORT))
+        self.slave_accepted_timestamp = time.time()
 
     def handler(self, message, con, addr):
         if re.match(self.UPLOAD_REGEX, message):
@@ -33,6 +43,12 @@ class FileServer(TCPServer):
             self.download(con, addr, message)
         elif re.match(self.UPDATE_REGEX, message):
             self.update(con, addr, message)
+        elif re.match(self.PROPOSER_PREPARE_REGEX, message):
+            self.paxos_prepare_response(con, addr, message)
+        elif re.match(self.PROPOSER_ACCEPT_REGEX, message):
+            self.paxos_accept_response(con, addr, message)
+        elif re.match(self.SENDALL_DATA_TO_MASTER, message):
+            self.paxos_accept_response(con, addr, message)
         else:
             return False
 
@@ -86,7 +102,7 @@ class FileServer(TCPServer):
         return
 
     def get_slaves(self):
-        # Function to get the list of slave file servers
+        # Function that operate the slave to get the list of slaves (including itself) from host
         return_list = []
         request_data = self.GET_SLAVES_HEADER % (self.HOST, self.PORT,)
         lines = self.send_request(request_data, self.DIR_HOST, self.DIR_PORT).splitlines()
@@ -97,6 +113,37 @@ class FileServer(TCPServer):
             return_list.append((host, port))
         return return_list
 
+    def paxos_prepare_response(self, con, addr, text):
+        # Stage 1
+        # Acceptor: response to the prepare from the proposer
+        request = text.splitlines()
+        prepare_timestamp = int(request[0].split()[1])
+        response_info = ""
+        if prepare_timestamp <= self.slave_accepted_timestamp:
+            response_info = "error"
+            response_str = self.ACCEPTOR_POK_HEADER % (
+                self.HOST, str(self.PORT), response_info, "null")
+        else:
+            self.slave_accepted_timestamp = prepare_timestamp
+            slave_cur_timestamp = time.time()
+            response_info = "PoK"
+            response_str = self.ACCEPTOR_POK_HEADER % (
+                self.HOST, str(self.PORT), response_info, slave_cur_timestamp)
+        self.send_request(response_str, self.DIR_HOST, self.DIR_PORT)
+
+    def paxos_accept_response(self, con, addr, text):
+        # Stage 2
+        # Acceptor: response to the accept from the proposer
+        request = text.splitlines()
+        accept_timestamp = int(request[0].split()[1])
+        response_info = ""
+        if accept_timestamp <= self.slave_accepted_timestamp:
+            response_info = "error"
+        else:
+            self.slave_accepted_timestamp = accept_timestamp
+            response_info = "AoK"
+        response_str = self.ACCEPTOR_AOK_HEADER % response_info
+        self.send_request(response_str, self.DIR_HOST, self.DIR_PORT)
 
 def main():
     try:

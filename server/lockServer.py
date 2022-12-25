@@ -71,7 +71,7 @@ class LockServer(TCPServer):
 
         if lock_type == 'read':
             con.isolation_level = 'SHARED'
-            con.execute('BEGIN PENDING')
+            # con.execute('BEGIN PENDING')
             con.execute('BEGIN SHARED')
 
         elif lock_type == 'write':
@@ -84,7 +84,7 @@ class LockServer(TCPServer):
             
         current_time = int(time.time())
         end_time = current_time + lock_period
-        '''
+        # '''
         cur = con.cursor()
         # 找锁
         cur.execute("SELECT count(*) FROM Locks WHERE Path = ? AND Time > ?", (path, current_time))
@@ -95,7 +95,7 @@ class LockServer(TCPServer):
             return_time = end_time
         else:
             return_time = False
-        '''
+        # '''
         # End r/w access to the db
         con.commit()
         con.close()
@@ -106,8 +106,17 @@ class LockServer(TCPServer):
         return_time = -1
         con = db.connect(self.DATABASE)
         # Exclusive r/w access to the db
-        con.isolation_level = lock_type
-        con.execute('BEGIN {}'.format(lock_type))
+        if lock_type == 'read':
+            con.isolation_level = 'SHARED'
+            # con.execute('BEGIN PENDING')
+            con.execute('BEGIN SHARED')
+
+        elif lock_type == 'write':
+            con.isolation_level = 'EXCLUSIVE'
+            con.execute('BEGIN EXCLUSIVE')
+        else:
+            con.close()
+            return False
         current_time = int(time.time())
         cur = con.cursor()
         cur.execute("SELECT count(*) FROM Locks WHERE Path = ? AND Time > ?", (path, current_time))

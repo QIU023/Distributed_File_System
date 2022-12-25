@@ -147,7 +147,7 @@ class TCPClient:
             if re.match(self.SERVER_RESPONSE, request):
                 # Remove lock from file
                 if access_type == 'read':
-                    self.__unlock_file(filename)
+                    self.__unlock_file(filename, access_type)
                 elif access_type == 'write':
                     params = request.splitlines()
                     server = params[0].split()[1]
@@ -166,7 +166,11 @@ class TCPClient:
                             os.remove(path)
                         '''
                         del self.open_files[filename]
-                    
+                        self.__unlock_file(filename, access_type)
+                # else:
+                    # print("lock type error")
+            # else:
+                # print("server error!")
                 
         return file_uploaded
 
