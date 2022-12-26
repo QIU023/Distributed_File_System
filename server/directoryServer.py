@@ -20,6 +20,7 @@ class DirectoryServer(TCPServer):
     CREATE_DIR_REGEX = "CREATE_DIR: \nDIRECTORY: [a-zA-Z0-9_./]*\n\n"
     DELETE_DIR_REGEX = "DELETE_DIR: \nDIRECTORY: [a-zA-Z0-9_./]*\n\n"
     GETALL_DATA_FROM_A_SLAVE = "SENDALL_DATA_TO_MASTER\n\n"
+    SENDALL_DATA_TO_ALL_SLAVES_HEADER = "SENDALL_DATA_TO_ALL_SLAVES_HEADER\n\n%s"
 
     DATABASE = "Database/directories.db"
 
@@ -31,32 +32,46 @@ class DirectoryServer(TCPServer):
     PAXOS_CHECK_REGEX = "PAXOS_CHECK\n\n"
     PROPOSER_PREPARE_HEADER = "PROPOSER_PREPARE_N: %s\n\n"    
     PROPOSER_ACCEPT_HEADER = "PROPOSER_ACCEPT_N: %s\n\nPROPOSER_ACCEPT_V: %s\n\n"
-    ACCEPTOR_POK_REGEX = "HOST: [a-zA-Z0-9_.]*\n\nPORT: [a-zA-Z0-9_.]*\n\nACCEPTOR_POK: [a-zA-Z0-9_.]*\n\nACCEPTOR_ACCEPT_N: [0-9_.]*\n\nACCEPTOR_ACCEPT_V: .*\n\n"
-    ACCEPTOR_AOK_REGEX = "HOST: [a-zA-Z0-9_.]*\n\nPORT: [a-zA-Z0-9_.]*\n\nACCEPTOR_AOK: [a-zA-Z0-9_.]*\n\n"
+    ACCEPTOR_POK_REGEX = "HOST: [a-zA-Z0-9_.]*\n\nPORT: [0-9_.]*\n\nACCEPTOR_POK: [a-zA-Z0-9_.]*\n\nACCEPTOR_ACCEPT_N: [0-9_.]*\n\nACCEPTOR_ACCEPT_V: .*\n\n"
+    ACCEPTOR_AOK_REGEX = "HOST: [a-zA-Z0-9_.]*\n\nPORT: [0-9_.]*\n\nACCEPTOR_AOK: [a-zA-Z0-9_.]*\n\n"
     
+    SENDALL_DATA_REGEX = "ALL_DATA_TO_MASTER\n\nACCEPT_N: [0-9_.]\n\nALLDATA: [a-zA-Z0-9_.]*\n\n"
+    
+
     def __init__(self, port_use=None):
         TCPServer.__init__(self, port_use, self.handler)
         self.create_tables()
         self.slave_nodes = []
+
         self.paxos_slave_acceptN_dict = {(self.DIR_HOST, self.DIR_PORT): time.time()}
         self.num_slaves = 0
         self.pok_sum = [0, 0]
         self.aok_sum = [0, 0]
+        self.chosen_slave = None
+        self.paxos_trying_times_limit = 5
+        self.paxos_trying_times = 0
+        self.paxos_check_interval = 1000000
+        self.paxos_previous_check_time = time.time()
+        self.paxos_cur_stage = 0
 
 
     def handler(self, message, con, addr):
         
-        if PASS:
-            self.paxos_consistency_check()
+        if (time.time() - self.paxos_previous_check_time) % self.paxos_check_interval == 0:
+            self.paxos_cur_stage = 1
+            self.paxos_repeative_calling()
 
         if re.match(self.GET_REGEX, message):
             self.get_server(con, addr, message)
         elif re.match(self.GET_SLAVES_REGEX, message):
             self.get_slaves(con, addr, message)
-        # elif re.match(self.PAXOS_CHECK_REGEX, message):
         elif re.match(self.ACCEPTOR_POK_REGEX, message) or re.match(self.ACCEPTOR_AOK_REGEX, message):
-            # operate the paxos status
-            self.update_consistency_status(con, addr, message)
+            # confirming PoK/AoK, operate the paxos status
+            self.paxos_update_response_status(con, addr, message)
+        elif re.match(self.SENDALL_DATA_REGEX, message):
+            # already confirmed sum(AoK) > n / 2, sychonize data to all slaves
+            self.paxos_send_alldata_to_all_slaves(con, addr, message)
+
         else:
             return False
 
@@ -107,9 +122,12 @@ class DirectoryServer(TCPServer):
 
         return
 
-    # def config_local_slave_info(self):
+    # def paxos_consistency_check(self, con, addr, text):
+        
+    #     pass
 
-    def paxos_proposer_send(self, is_prepared=True):
+
+    def paxos_proposer_send(self, purpose='send prepare'):
         """
         PAXOS
         Proposer, Acceptor, Learner
@@ -122,29 +140,66 @@ class DirectoryServer(TCPServer):
         # Stage 1
         # Proposer: send prepare to all acceptors
         proposer_timestamp = time.time()
-        if is_prepared:
+        if purpose == 'send prepare':
             send_string = self.PROPOSER_PREPARE_HEADER % proposer_timestamp
-        else:
+            for (host, port) in self.slave_nodes:
+                self.send_request(send_string, host, int(port))
+            return True
+        elif purpose == 'check PoK':
+            assert self.paxos_cur_stage == 2, 'Invalid PAXOS stage! End of current PAXOS Check'
             if self.pok_num[1] > self.num_slaves / 2:
-                # alldata = ""
                 max_timestamp = 0
-                argmax_slave = None
                 for k, v in self.paxos_slave_acceptN_dict.items():
                     if v > max_timestamp:
                         max_timestamp = v
-                        argmax_slave = k
-                acceptV = self.send_request(self.GETALL_DATA_FROM_A_SLAVE, host, int(port))
-                send_string = self.PROPOSER_ACCEPT_HEADER % (proposer_timestamp, acceptV)
+                        self.chosen_slave = k
+                self.send_request(self.GETALL_DATA_FROM_A_SLAVE, k[0], int(k[1]))
+                return True
+                # wait for the acceptV and repeat to all slaves
             else:
                 self.pok_sum = [0, 0]
+                self.aok_sum = [0, 0]
+                return False
+                # repeatly sending prepare
+        elif purpose == 'check AoK':
+            assert self.paxos_cur_stage == 2, 'Invalid PAXOS stage! End of current PAXOS Check'
+            if self.aok_num[1] > self.num_slaves / 2:
+                self.paxos_cur_stage = 0
+                print('PAXOS Consistency Check Passed!!!')
+                return True
+                # final confirmation! PAXOS end!
+            else:
+                self.pok_sum = [0, 0]
+                self.aok_sum = [0, 0]
+                return False
+        else:
+            print('purpose content: ', purpose, ' error! \
+                Should be one of the \{send prepare, check PoK, check AoK\}')
+            self.paxos_cur_stage = 0
+            return False
+
+    def paxos_send_alldata_to_all_slaves(self, con, addr, text):
+
+        request = text.splitlines()
+        all_data = '\n\n'.join(request[2:])
+        send_string = self.SENDALL_DATA_TO_ALL_SLAVES_HEADER % all_data
         for (host, port) in self.slave_nodes:
+            if self.chosen_slave == (host, port):
+                continue
             self.send_request(send_string, host, int(port))
 
-    def paxos_consistency_check(self):
+    def paxos_repeative_calling(self, purpose = 'send prepare'):
+        stage_res = False
+        self.paxos_cur_stage = 1
+        while not stage_res and self.paxos_trying_times < self.paxos_trying_times_limit:
+            stage_res = self.paxos_proposer_send(purpose=purpose)
+            if not stage_res:
+                self.paxos_cur_stage = 1
+                self.paxos_trying_times += 1
+        if not stage_res:
+            print("PAXOS Consistency Check Failed!!!")
 
-        pass
-
-    def update_consistency_status(self, con, addr, text):
+    def paxos_update_response_status(self, con, addr, text):
         request = text.splitlines()
         host = request[0].split()[1]
         port = request[1].split()[1]
@@ -158,14 +213,16 @@ class DirectoryServer(TCPServer):
 
         self.paxos_slave_acceptN_dict[(host, port)] = int(acceptor_timestamp) 
 
-        if self.pok_sum[0] == self.num_slaves:
-            self.paxos_proposer_send(is_prepared=True)
+        if self.paxos_cur_stage == 1 and self.pok_sum[0] == self.num_slaves:
+            self.paxos_cur_stage = 2
+            self.paxos_repeative_calling('check PoK')
 
-        self.aok_sum[0] += int(head == 'ACCEPTOR_AOK')
-        self.aok_sum[1] += int(res == 'AoK')
+        if self.paxos_cur_stage == 2:            
+            self.aok_sum[0] += int(head == 'ACCEPTOR_AOK')
+            self.aok_sum[1] += int(res == 'AoK')
 
-        if self.aok_sum[0] == self.num_slaves:
-            self.paxos_proposer_send(is_prepared=False)
+            if self.aok_sum[0] == self.num_slaves:
+                self.paxos_repeative_calling('check AoK')
 
     def find_host(self, path):
         # Function that takes a path and returns the server that contains that directories files

@@ -30,6 +30,10 @@ class FileServer(TCPServer):
     ACCEPTOR_AOK_HEADER = "HOST: %s\n\nPORT: %s\n\nACCEPTOR_AOK: %s\n\n"
 
     SENDALL_DATA_TO_MASTER = "SENDALL_DATA_TO_MASTER\n\n"
+    # SENDALL_DATA_HEADER = "%s"
+    UPLOAD_HEADER = "UPLOAD: %s\tDATA: %s\n\n"
+    
+    RECVALL_DATA_FROM_CHOSEN_SLAVE_REGEX = "SENDALL_DATA_TO_ALL_SLAVES_HEADER\n\n[a-zA-Z0-9_.]*"
 
     def __init__(self, port_use=None):
         TCPServer.__init__(self, port_use, self.handler)
@@ -44,11 +48,17 @@ class FileServer(TCPServer):
         elif re.match(self.UPDATE_REGEX, message):
             self.update(con, addr, message)
         elif re.match(self.PROPOSER_PREPARE_REGEX, message):
+            # confirming PoK
             self.paxos_prepare_response(con, addr, message)
         elif re.match(self.PROPOSER_ACCEPT_REGEX, message):
+            # confirming AoK
             self.paxos_accept_response(con, addr, message)
         elif re.match(self.SENDALL_DATA_TO_MASTER, message):
-            self.paxos_accept_response(con, addr, message)
+            # already confirmed sum(AoK) > n / 2, chosen slave send acceptV to master
+            self.paxos_send_acceptV(con, addr, message)
+        elif re.match(self.RECVALL_DATA_FROM_CHOSEN_SLAVE_REGEX, message):
+            # already confirmed sum(AoK) > n / 2
+            self.update_all(con, addr, message)
         else:
             return False
 
@@ -60,6 +70,7 @@ class FileServer(TCPServer):
         return_string = self.UPLOAD_RESPONSE
         con.sendall(return_string)
         self.update_slaves(filename, data)
+        # 更新一个文件就全部同步吗?
         return
 
     def download(self, con, addr, text):
@@ -79,6 +90,12 @@ class FileServer(TCPServer):
         self.execute_write(text)
         return_string = self.UPLOAD_RESPONSE
         con.sendall(return_string)
+        return
+    
+    def update_all(self, con, addr, text):
+        for data_i in text.splitlines():
+            data_i = data_i.split('\t')
+            self.execute_write('\n'.join(data_i))
         return
 
     def execute_write(self, text):
@@ -144,6 +161,17 @@ class FileServer(TCPServer):
             response_info = "AoK"
         response_str = self.ACCEPTOR_AOK_HEADER % response_info
         self.send_request(response_str, self.DIR_HOST, self.DIR_PORT)
+
+    def paxos_send_acceptV(self, con, addr, text):
+        all_files_info = os.listdir(self.BUCKET_LOCATION)
+        all_files_str = ""
+        acceptor_cur_timestamp = time.time()
+        for filename in all_files_info:
+            filepath = os.path.join(self.BUCKET_LOCATION, filename)
+            file_handle = open(filepath, 'r')
+            data = file_handle.read()
+            all_files_str += self.UPLOAD_HEADER % (filename, base64.b64encode(data))
+        self.send_request(all_files_str, self.DIR_HOST, self.DIR_PORT)
 
 def main():
     try:
