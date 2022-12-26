@@ -12,7 +12,7 @@ from tcpServer import TCPServer
 
 # host server
 class DirectoryServer(TCPServer):
-    GET_REGEX = "GET_SERVER: \nFILENAME: [a-zA-Z0-9_./]*\n\n"
+    GET_REGEX = "GET_SERVER: \nCLIENT_HOST: [a-zA-Z0-9_./]*\nCLIENT_PORT: [0-9_./]*\n\FILENAME: [a-zA-Z0-9_./]*\n\n"
     GET_RESPONSE = "PRIMARY_SERVER: %s\nPORT: %s\nFILENAME: %s%s\n\n"
     GET_SLAVES_REGEX = "GET_SLAVES: .*\nPORT: [0-9]*\n\n"
     SLAVE_RESPONSE_HEADER = "SLAVES: %s\n\n"
@@ -31,11 +31,11 @@ class DirectoryServer(TCPServer):
     # paxos consistency message headers, for master / proposer
     PAXOS_CHECK_REGEX = "PAXOS_CHECK\n\n"
     PROPOSER_PREPARE_HEADER = "PROPOSER_PREPARE_N: %s\n\n"    
-    PROPOSER_ACCEPT_HEADER = "PROPOSER_ACCEPT_N: %s\n\nPROPOSER_ACCEPT_V: %s\n\n"
-    ACCEPTOR_POK_REGEX = "HOST: [a-zA-Z0-9_.]*\n\nPORT: [0-9_.]*\n\nACCEPTOR_POK: [a-zA-Z0-9_.]*\n\nACCEPTOR_ACCEPT_N: [0-9_.]*\n\nACCEPTOR_ACCEPT_V: .*\n\n"
-    ACCEPTOR_AOK_REGEX = "HOST: [a-zA-Z0-9_.]*\n\nPORT: [0-9_.]*\n\nACCEPTOR_AOK: [a-zA-Z0-9_.]*\n\n"
+    PROPOSER_ACCEPT_HEADER = "PROPOSER_ACCEPT_N: %s\nPROPOSER_ACCEPT_V: %s\n\n"
+    ACCEPTOR_POK_REGEX = "HOST: [a-zA-Z0-9_.]*\n\PORT: [0-9_.]*\nACCEPTOR_POK: [a-zA-Z0-9_.]*\nACCEPTOR_ACCEPT_N: [0-9_.]*\n\nACCEPTOR_ACCEPT_V: .*\n\n"
+    ACCEPTOR_AOK_REGEX = "HOST: [a-zA-Z0-9_.]*\nPORT: [0-9_.]*\nACCEPTOR_AOK: [a-zA-Z0-9_.]*\n"
     
-    SENDALL_DATA_REGEX = "ALL_DATA_TO_MASTER\n\nACCEPT_N: [0-9_.]\n\nALLDATA: [a-zA-Z0-9_.]*\n\n"
+    SENDALL_DATA_REGEX = "ALL_DATA_TO_MASTER\nACCEPT_N: [0-9_.]\nALLDATA: [a-zA-Z0-9_.]*\n\n"
     
 
     def __init__(self, port_use=None):
@@ -82,18 +82,22 @@ class DirectoryServer(TCPServer):
     def get_server(self, con, addr, text):
         # Handler for file upload requests
         request = text.splitlines()
-        full_path = request[1].split()[1]
+        client_host = request[1]
+        client_port = int(request[2])
+        full_path = request[3].split()[1]
 
         path, file = os.path.split(full_path)
         name, ext = os.path.splitext(file)
         filename = hashlib.sha256(full_path).hexdigest() + ext
-        host, port = self.find_host(path)
+        all_slave_hosts = self.find_host(path)
+        host, port = self.slave_fileserver_distribute(all_slave_hosts, client_host, client_port)
 
         if not host:
             # The Directory doesn't exist and must be added to the db
             server_id = self.pick_random_host()
             self.create_dir(path, server_id)
-            host, port = self.find_host(path)
+            all_slave_hosts = self.find_host(path)
+            host, port = self.slave_fileserver_distribute(all_slave_hosts, client_host, client_port)
 
         # Get the list of slaves that have a copy of the file
         slave_string = self.get_slave_string(host, port)
@@ -101,6 +105,14 @@ class DirectoryServer(TCPServer):
         # print(return_string)
         con.sendall(return_string)
         return
+
+    
+    def slave_fileserver_distribute(self, all_slave_hosts, client_host, client_port):
+        # 流量管理算法/负载均衡算法
+        # 获得所有slaves与client的ping延时？ 
+
+        return chosen_host, chosen_port
+
 
     def get_slaves(self, con, addr, text):
         # Function that operate the host to send the list of slave servers
@@ -236,8 +248,8 @@ class DirectoryServer(TCPServer):
                 server_id = server[0]
                 cur = con.cursor()
                 cur.execute("SELECT Server, Port FROM Servers WHERE Id = ?", (server_id,))
-                return_host = cur.fetchone()
-        return return_host
+                return_host_list = cur.fetchall()
+        return return_host_list
 
     def pick_random_host(self):
         # Function to pick a random host from the database

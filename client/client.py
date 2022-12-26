@@ -40,7 +40,7 @@ class TCPClient:
     # 将请求先设置为常量
     UPLOAD_HEADER = "UPLOAD: %s\nDATA: %s\n\n"
     DOWNLOAD_HEADER = "DOWNLOAD: %s\n\n"
-    DIRECTORY_HEADER = "GET_SERVER: \nFILENAME: %s\n\n"
+    DIRECTORY_HEADER = "GET_SERVER: \nCLIENT_HOST: %s\nCLIENT_PORT: %s\nFILENAME: %s\n\n"
     SERVER_RESPONSE = "PRIMARY_SERVER: .*\nPORT: .*\nFILENAME: .*"
     LOCK_HEADER = "LOCK_FILE: %s\nLOCK_TYPE: %s\nTime: %d\n\n"
     LOCK_RESPONSE = "LOCK_RESPONSE: \nFILENAME: .*\nTIME: .*\n\n"
@@ -234,7 +234,9 @@ class TCPClient:
         data = base64.b64encode(data)
 
         request = self.UPLOAD_HEADER % (filename, data)
+
         return self.__send_request(request, server, self.FILE_PORT)
+
 
     # 下载文件 考虑同名覆盖的问题
     def __download_file(self, server, port, filename):
@@ -253,7 +255,7 @@ class TCPClient:
     # 获取文件位置
     def __get_directory(self, filename):
         """Send a request to the server to find the location of a directory"""
-        request = self.DIRECTORY_HEADER % filename
+        request = self.DIRECTORY_HEADER % (self.HOST, self.PORT, filename)
 
         return self.__send_request(request, self.DIR_HOST, self.DIR_PORT)
 

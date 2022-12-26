@@ -25,15 +25,15 @@ class FileServer(TCPServer):
 
     # paxos consistency message headers, for slaves / acceptor
     PROPOSER_PREPARE_REGEX = "PROPOSER_PREPARE_N: [0-9_.]*\n\n"    
-    PROPOSER_ACCEPT_REGEX = "PROPOSER_ACCEPT_N: [0-9_.]*\n\nPROPOSER_ACCEPT_V: .*\n\n"
-    ACCEPTOR_POK_HEADER = "HOST: %s\n\nPORT: %s\n\nACCEPTOR_POK: %s\n\nACCEPTOR_ACCEPT_N: %d\n\n"
-    ACCEPTOR_AOK_HEADER = "HOST: %s\n\nPORT: %s\n\nACCEPTOR_AOK: %s\n\n"
+    PROPOSER_ACCEPT_REGEX = "PROPOSER_ACCEPT_N: [0-9_.]*\nPROPOSER_ACCEPT_V: .*\n\n"
+    ACCEPTOR_POK_HEADER = "HOST: %s\nPORT: %s\nACCEPTOR_POK: %s\nACCEPTOR_ACCEPT_N: %d\n\n"
+    ACCEPTOR_AOK_HEADER = "HOST: %s\nPORT: %s\nACCEPTOR_AOK: %s\n\n"
 
     SENDALL_DATA_TO_MASTER = "SENDALL_DATA_TO_MASTER\n\n"
     # SENDALL_DATA_HEADER = "%s"
     UPLOAD_HEADER = "UPLOAD: %s\tDATA: %s\n\n"
     
-    RECVALL_DATA_FROM_CHOSEN_SLAVE_REGEX = "SENDALL_DATA_TO_ALL_SLAVES_HEADER\n\n[a-zA-Z0-9_.]*"
+    RECVALL_DATA_FROM_CHOSEN_SLAVE_REGEX = "SENDALL_DATA_TO_ALL_SLAVES_HEADER\n[a-zA-Z0-9_.]*"
 
     def __init__(self, port_use=None):
         TCPServer.__init__(self, port_use, self.handler)
