@@ -28,17 +28,19 @@ class FileServer(TCPServer):
     PROPOSER_ACCEPT_REGEX = "PROPOSER_ACCEPT_N: [0-9_.]*\nPROPOSER_ACCEPT_V: .*\n\n"
     ACCEPTOR_POK_HEADER = "HOST: %s\nPORT: %s\nACCEPTOR_POK: %s\nACCEPTOR_ACCEPT_N: %d\n\n"
     ACCEPTOR_AOK_HEADER = "HOST: %s\nPORT: %s\nACCEPTOR_AOK: %s\n\n"
-
     SENDALL_DATA_TO_MASTER = "SENDALL_DATA_TO_MASTER\n\n"
-    # SENDALL_DATA_HEADER = "%s"
     UPLOAD_HEADER = "UPLOAD: %s\tDATA: %s\n\n"
-    
     RECVALL_DATA_FROM_CHOSEN_SLAVE_REGEX = "SENDALL_DATA_TO_ALL_SLAVES_HEADER\n[a-zA-Z0-9_.]*"
+
+    # Load balance/Traffic Management Algorithm for slaves
+    SEND_SLAVE_ACCESS_STATUS_HEADER = "HOST: %s\nPORT: %s\nSLAVE_ACCESS_STATUS: %s\n\n"
+
 
     def __init__(self, port_use=None):
         TCPServer.__init__(self, port_use, self.handler)
         self.BUCKET_LOCATION = os.path.join(self.BUCKET_LOCATION, str(self.PORT))
         self.slave_accepted_timestamp = time.time()
+        self.access_status = {}
 
     def handler(self, message, con, addr):
         if re.match(self.UPLOAD_REGEX, message):

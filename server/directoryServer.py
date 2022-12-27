@@ -7,6 +7,7 @@ import hashlib
 import random
 import sqlite3 as db
 import time
+from collections import OrderedDict
 
 from tcpServer import TCPServer
 
@@ -34,8 +35,11 @@ class DirectoryServer(TCPServer):
     PROPOSER_ACCEPT_HEADER = "PROPOSER_ACCEPT_N: %s\nPROPOSER_ACCEPT_V: %s\n\n"
     ACCEPTOR_POK_REGEX = "HOST: [a-zA-Z0-9_.]*\n\PORT: [0-9_.]*\nACCEPTOR_POK: [a-zA-Z0-9_.]*\nACCEPTOR_ACCEPT_N: [0-9_.]*\n\nACCEPTOR_ACCEPT_V: .*\n\n"
     ACCEPTOR_AOK_REGEX = "HOST: [a-zA-Z0-9_.]*\nPORT: [0-9_.]*\nACCEPTOR_AOK: [a-zA-Z0-9_.]*\n"
-    
     SENDALL_DATA_REGEX = "ALL_DATA_TO_MASTER\nACCEPT_N: [0-9_.]\nALLDATA: [a-zA-Z0-9_.]*\n\n"
+
+    # Load balance/Traffic Management Algorithm for slaves
+    GET_SLAVE_ACCESS_STATUS_HEADER = "GET_SLAVE_ACCESS_STATUS\n\n"
+    RECV_SLAVE_ACCESS_STATUS_REGEX = "SLAVE_ACCESS_STATUS: [a-zA-Z0-9_./]*\n\n"
     
 
     def __init__(self, port_use=None):
@@ -54,12 +58,15 @@ class DirectoryServer(TCPServer):
         self.paxos_previous_check_time = time.time()
         self.paxos_cur_stage = 0
 
+        self.client2slaves_access_info = OrderedDict()
+        self.slave_access_info = {}
+
 
     def handler(self, message, con, addr):
         
         if (time.time() - self.paxos_previous_check_time) % self.paxos_check_interval == 0:
             self.paxos_cur_stage = 1
-            self.paxos_repeative_calling()
+            self.paxos_repeative_calling(purpose='send prepare')
 
         if re.match(self.GET_REGEX, message):
             self.get_server(con, addr, message)
@@ -71,6 +78,8 @@ class DirectoryServer(TCPServer):
         elif re.match(self.SENDALL_DATA_REGEX, message):
             # already confirmed sum(AoK) > n / 2, sychonize data to all slaves
             self.paxos_send_alldata_to_all_slaves(con, addr, message)
+        elif re.match(self.RECV_SLAVE_ACCESS_STATUS_REGEX, message):
+            self.slave_fileserver_access_update(con, addr, message)
 
         else:
             return False
@@ -90,14 +99,14 @@ class DirectoryServer(TCPServer):
         name, ext = os.path.splitext(file)
         filename = hashlib.sha256(full_path).hexdigest() + ext
         all_slave_hosts = self.find_host(path)
-        host, port = self.slave_fileserver_distribute(all_slave_hosts, client_host, client_port)
+        host, port = self.slave_fileserver_distribute(all_slave_hosts, client_host, client_port, strategy='random')
 
         if not host:
             # The Directory doesn't exist and must be added to the db
             server_id = self.pick_random_host()
             self.create_dir(path, server_id)
             all_slave_hosts = self.find_host(path)
-            host, port = self.slave_fileserver_distribute(all_slave_hosts, client_host, client_port)
+            host, port = self.slave_fileserver_distribute(all_slave_hosts, client_host, client_port, strategy='random')
 
         # Get the list of slaves that have a copy of the file
         slave_string = self.get_slave_string(host, port)
@@ -107,22 +116,49 @@ class DirectoryServer(TCPServer):
         return
 
     
-    def slave_fileserver_distribute(self, all_slave_hosts, client_host, client_port):
+    def slave_fileserver_distribute_prepare(self, all_slave_hosts, client_host, client_port):
         # 流量管理算法/负载均衡算法
         # 获得所有slaves与client的ping延时？ 
 
+        res_arr = []
+        # remain = len(all_slave_hosts)
         for slave_host in all_slave_hosts:
-            return_str = os.popen('tracert {}'.format(slave_host)).read().splitlines()[4:-2]
+            host, port = slave_host
+            return_str = os.popen('tracert {}'.format(host)).read().splitlines()[4:-2]
             num_hoops = len(return_str)
             
-            return_str = os.popen('ping {}'.format(slave_host)).read()
+            return_str = os.popen('ping {}'.format(host)).read()
             arr = return_str.splitlines()[-1].split('，')
             min_time = arr[0].split('=')[1][1:-2]
             max_time = arr[1].split('=')[1][1:-2]
             avg_time = arr[2].split('=')[1][1:-2]
 
+            if (host, port) not in self.slave_access_info:
+                self.send_request(self.GET_SLAVE_ACCESS_STATUS_HEADER, host, int(port))
+                access_info = None
+            else:
+                access_info = self.slave_access_info[(host, port)]
+                # remain -= 1
+            
+            res_arr.append((num_hoops, [min_time, max_time, avg_time], access_info))
+        self.client2slaves_access_info[(client_host, client_port)] = res_arr
+
+    # 1st: num hoops
+    def slave_fileserver_distribute(self, all_slave_hosts, client_host, client_port, strategy = 'random'):
+        if strategy == 'random':
+            chosen_host, chosen_port = random.choice(all_slave_hosts)[0]
+        elif strategy == 'Load Balancing':
+            pass
+        elif strategy == 'Load Balancing and Traffic Management':
+            pass
         return chosen_host, chosen_port
 
+    def slave_fileserver_access_update(self, con, addr, text):
+        request = text.splitlines()
+        host = request[0].split()[1]
+        port = request[1].split()[1]
+        access_freq = int(request[2].split()[1])
+        self.slave_access_info[(host, port)] = access_freq
 
     def get_slaves(self, con, addr, text):
         # Function that operate the host to send the list of slave servers
@@ -143,11 +179,6 @@ class DirectoryServer(TCPServer):
         self.slave_nodes = return_list
 
         return
-
-    # def paxos_consistency_check(self, con, addr, text):
-        
-    #     pass
-
 
     def paxos_proposer_send(self, purpose='send prepare'):
         """
