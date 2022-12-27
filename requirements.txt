@@ -11,3 +11,6 @@ requests==2.25.1
 urllib3==1.26.2
 Werkzeug==1.0.1
 redis==4.4.0
+grpcio==1.51.1
+protobuf==4.21.12
+grpcio_tools==1.51.1 

@@ -111,6 +111,16 @@ class DirectoryServer(TCPServer):
         # 流量管理算法/负载均衡算法
         # 获得所有slaves与client的ping延时？ 
 
+        for slave_host in all_slave_hosts:
+            return_str = os.popen('tracert {}'.format(slave_host)).read().splitlines()[4:-2]
+            num_hoops = len(return_str)
+            
+            return_str = os.popen('ping {}'.format(slave_host)).read()
+            arr = return_str.splitlines()[-1].split('，')
+            min_time = arr[0].split('=')[1][1:-2]
+            max_time = arr[1].split('=')[1][1:-2]
+            avg_time = arr[2].split('=')[1][1:-2]
+
         return chosen_host, chosen_port
 
 
