@@ -57,6 +57,9 @@ class TCPClient:
     # path = '\\'.join(CLIENT_ROOT)
     # BUCKET_NAME = "ClientFiles"
     # BUCKET_LOCATION = os.path.join(CLIENT_ROOT, BUCKET_NAME)
+    RECV_SLAVE_ACCESS_STATUS_REGEX = "SLAVE_ACCESS_STATUS_TO_CLIENT: [a-zA-Z0-9_.]*\n\n"
+    # RECV_SLAVE_ACCESS_STATUS_REGEX = "HOST: [a-zA-Z0-9_.]*\tPORT: [0-9_.]*\tSLAVE_ACCESS_STATUS: [a-zA-Z0-9_.]*\t"
+    
 
     def __init__(self, port_use=None):
         if not port_use:
@@ -194,6 +197,36 @@ class TCPClient:
             file_handle.write(data)
             success = True
         return success
+
+    
+    def client2slave_server_ping_info(self, all_slave_hosts, client_host, client_port):
+        # 流量管理算法/负载均衡算法
+        # 获得所有slaves与client的ping延时？ 
+
+        # RECV_SLAVE_ACCESS_STATUS_REGEX 异步重新调用？
+
+        res_arr = []
+        # remain = len(all_slave_hosts)
+        for slave_host in all_slave_hosts:
+            host, port = slave_host
+            return_str = os.popen('tracert {}'.format(host)).read().splitlines()[4:-2]
+            num_hoops = len(return_str)
+            
+            return_str = os.popen('ping {}'.format(host)).read()
+            arr = return_str.splitlines()[-1].split('，')
+            # min_time = arr[0].split('=')[1][1:-2]
+            # max_time = arr[1].split('=')[1][1:-2]
+            avg_time = arr[2].split('=')[1][1:-2]
+
+            if (host, port) not in self.slave_access_info:
+                self.send_request(self.GET_SLAVE_ACCESS_STATUS_HEADER, host, int(port))
+                access_info = None
+            else:
+                access_info = self.slave_access_info[(host, port)]
+                # remain -= 1
+            
+            res_arr.append([num_hoops, avg_time, access_info])
+            
 
     def __send_request(self, data, server, port):
         """Function that sends requests to remote server"""

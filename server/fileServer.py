@@ -5,7 +5,7 @@ import re
 import sys
 import base64
 import time
-
+# from collections import queue
 from tcpServer import TCPServer
 
 
@@ -33,16 +33,20 @@ class FileServer(TCPServer):
     RECVALL_DATA_FROM_CHOSEN_SLAVE_REGEX = "SENDALL_DATA_TO_ALL_SLAVES_HEADER\n[a-zA-Z0-9_.]*"
 
     # Load balance/Traffic Management Algorithm for slaves
-    SEND_SLAVE_ACCESS_STATUS_HEADER = "HOST: %s\nPORT: %s\nSLAVE_ACCESS_STATUS: %s\n\n"
+    SEND_SLAVE_ACCESS_STATUS_HEADER = "HOST: %s\nPORT: %s\nSLAVE_ACCESS_STATUS: %d\n\n"
+    access_stat_interval = 100000
 
 
     def __init__(self, port_use=None):
         TCPServer.__init__(self, port_use, self.handler)
         self.BUCKET_LOCATION = os.path.join(self.BUCKET_LOCATION, str(self.PORT))
         self.slave_accepted_timestamp = time.time()
-        self.access_status = {}
+        self.access_count = []
 
     def handler(self, message, con, addr):
+        curr_time = time.time()
+        self.access_count.append(curr_time)
+
         if re.match(self.UPLOAD_REGEX, message):
             self.upload(con, addr, message)
         elif re.match(self.DOWNLOAD_REGEX, message):
@@ -61,8 +65,13 @@ class FileServer(TCPServer):
         elif re.match(self.RECVALL_DATA_FROM_CHOSEN_SLAVE_REGEX, message):
             # already confirmed sum(AoK) > n / 2
             self.update_all(con, addr, message)
+        elif re.match(self.SEND_SLAVE_ACCESS_STATUS_HEADER, message):
+            self.send_access_info(con, addr, message)
         else:
             return False
+
+        while (len(self.access_count) > 0 and self.access_count[0] < curr_time - self.access_stat_interval):
+            del self.access_count[0]
 
         return True
 
@@ -98,6 +107,11 @@ class FileServer(TCPServer):
         for data_i in text.splitlines():
             data_i = data_i.split('\t')
             self.execute_write('\n'.join(data_i))
+        return
+
+    def send_access_info(self, con, addr, text):
+        return_string = self.SEND_SLAVE_ACCESS_STATUS_HEADER % (self.HOST, self.PORT, len(self.access_count))
+        self.send_request(return_string, self.DIR_HOST, self.DIR_PORT)
         return
 
     def execute_write(self, text):

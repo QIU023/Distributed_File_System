@@ -39,8 +39,9 @@ class DirectoryServer(TCPServer):
 
     # Load balance/Traffic Management Algorithm for slaves
     GET_SLAVE_ACCESS_STATUS_HEADER = "GET_SLAVE_ACCESS_STATUS\n\n"
-    RECV_SLAVE_ACCESS_STATUS_REGEX = "SLAVE_ACCESS_STATUS: [a-zA-Z0-9_./]*\n\n"
-    
+    SEND_SLAVE_ACCESS_STATUS_HEADER = "HOST: %s\tPORT: %s\tSLAVE_ACCESS_STATUS: %d\t"
+    RECV_SLAVE_ACCESS_STATUS_REGEX = "HOST: [a-zA-Z0-9_.]*\nPORT: [0-9_.]*\nSLAVE_ACCESS_STATUS: [a-zA-Z0-9_./]*\n\n"
+    SEND_SLAVE_ACCESS_STATUS_HEADER_TO_CLIENT = "SLAVE_ACCESS_STATUS_TO_CLIENT: %s\n\n"
 
     def __init__(self, port_use=None):
         TCPServer.__init__(self, port_use, self.handler)
@@ -58,7 +59,7 @@ class DirectoryServer(TCPServer):
         self.paxos_previous_check_time = time.time()
         self.paxos_cur_stage = 0
 
-        self.client2slaves_access_info = OrderedDict()
+        # self.client2slaves_access_info = OrderedDict()
         self.slave_access_info = {}
 
 
@@ -115,39 +116,21 @@ class DirectoryServer(TCPServer):
         con.sendall(return_string)
         return
 
-    
-    def slave_fileserver_distribute_prepare(self, all_slave_hosts, client_host, client_port):
-        # 流量管理算法/负载均衡算法
-        # 获得所有slaves与client的ping延时？ 
-
-        res_arr = []
-        # remain = len(all_slave_hosts)
-        for slave_host in all_slave_hosts:
-            host, port = slave_host
-            return_str = os.popen('tracert {}'.format(host)).read().splitlines()[4:-2]
-            num_hoops = len(return_str)
-            
-            return_str = os.popen('ping {}'.format(host)).read()
-            arr = return_str.splitlines()[-1].split('，')
-            min_time = arr[0].split('=')[1][1:-2]
-            max_time = arr[1].split('=')[1][1:-2]
-            avg_time = arr[2].split('=')[1][1:-2]
-
-            if (host, port) not in self.slave_access_info:
-                self.send_request(self.GET_SLAVE_ACCESS_STATUS_HEADER, host, int(port))
-                access_info = None
-            else:
-                access_info = self.slave_access_info[(host, port)]
-                # remain -= 1
-            
-            res_arr.append((num_hoops, [min_time, max_time, avg_time], access_info))
-        self.client2slaves_access_info[(client_host, client_port)] = res_arr
+    def send_slave_access_info2client(self, client_host, client_port):
+        for slave_host, slave_port in self.slave_nodes:
+            access_info = self.slave_access_info[(slave_host, slave_port)]
+            tmp_str = self.SEND_SLAVE_ACCESS_STATUS_HEADER % (slave_host, slave_port, access_info)
+        return_str = self.SEND_SLAVE_ACCESS_STATUS_HEADER_TO_CLIENT % tmp_str
+        self.send_request(return_str, client_host, int(client_port))
+        return
 
     # 1st: num hoops
     def slave_fileserver_distribute(self, all_slave_hosts, client_host, client_port, strategy = 'random'):
         if strategy == 'random':
             chosen_host, chosen_port = random.choice(all_slave_hosts)[0]
         elif strategy == 'Load Balancing':
+            self.send_slave_access_info2client(client_host, client_port)
+
             pass
         elif strategy == 'Load Balancing and Traffic Management':
             pass
