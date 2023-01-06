@@ -8,6 +8,9 @@ import time
 import queue
 import base64
 
+from copy import deepcopy, copy
+import numpy as np
+
 from LRU_cache import TwoQueue_Cache
 
 # 与服务器交流用的指令的正则表达式
@@ -57,9 +60,10 @@ class TCPClient:
     # path = '\\'.join(CLIENT_ROOT)
     # BUCKET_NAME = "ClientFiles"
     # BUCKET_LOCATION = os.path.join(CLIENT_ROOT, BUCKET_NAME)
-    RECV_SLAVE_ACCESS_STATUS_REGEX = "SLAVE_ACCESS_STATUS_TO_CLIENT: [a-zA-Z0-9_.]*\n\n"
+    GET_SLAVE_ACCESS_STATUS_HEADER = "GET_SLAVE_ACCESS_STATUS\n\n"
+    RECV_SLAVE_ACCESS_STATUS_REGEX = "SLAVE_ACCESS_STATUS_TO_CLIENT\n[a-zA-Z0-9_.]*\n\n"
     # RECV_SLAVE_ACCESS_STATUS_REGEX = "HOST: [a-zA-Z0-9_.]*\tPORT: [0-9_.]*\tSLAVE_ACCESS_STATUS: [a-zA-Z0-9_.]*\t"
-    
+    ANNOUNCE_OPTIMAL_SLAVE = "CLIENT_HOST: %s\nCLIENT_PORT: %s\nOPTIMAL_SLAVE_HOST: %s\nOPTIMAL_SLAVE_PORT: %s\n\n"
 
     def __init__(self, port_use=None):
         if not port_use:
@@ -72,6 +76,11 @@ class TCPClient:
         self.cache_used_size = 0
         self.threadQueue = queue.Queue()
 
+        self.weight_numhoop = 1
+        self.weight_time = 1
+        self.weight_access = 1
+
+        self.slave_access_info = {}
         self.local_redis_conn = redis.Redis(host = '127.0.0.1', port = self.LOCAL_REDIS_PORT, password=self.LOCAL_REDIS_PASSWD, db = 0)
 
     def get_file_info(self, file_istream):
@@ -130,12 +139,8 @@ class TCPClient:
                     # return file_downloaded
                 else:
                     file_downloaded = False
-                    # print("server connection error!")
             else:
                 file_downloaded = True
-                # print("file found in local cache!")
-                # data = self.read_cache(filename)
-            # ????
         else:
             file_downloaded = True
             # print("file already opened!")  
@@ -199,11 +204,9 @@ class TCPClient:
         return success
 
     
-    def client2slave_server_ping_info(self, all_slave_hosts, client_host, client_port):
+    def client_get_optimal_slave(self, all_slave_hosts):
         # 流量管理算法/负载均衡算法
         # 获得所有slaves与client的ping延时？ 
-
-        # RECV_SLAVE_ACCESS_STATUS_REGEX 异步重新调用？
 
         res_arr = []
         # remain = len(all_slave_hosts)
@@ -219,14 +222,30 @@ class TCPClient:
             avg_time = arr[2].split('=')[1][1:-2]
 
             if (host, port) not in self.slave_access_info:
-                self.send_request(self.GET_SLAVE_ACCESS_STATUS_HEADER, host, int(port))
-                access_info = None
-            else:
-                access_info = self.slave_access_info[(host, port)]
-                # remain -= 1
-            
-            res_arr.append([num_hoops, avg_time, access_info])
-            
+                slave_status_str = self.__send_request(self.GET_SLAVE_ACCESS_STATUS_HEADER, self.DIR_HOST, self.DIR_PORT)
+                slave_status_str = slave_status_str.splitlines()[1:-1]
+                for si in slave_status_str:
+                    si = si.split('\t')
+                    hi, pi, status_i = si
+                    self.slave_access_info[(hi, pi)] = status_i
+                
+            access_info = self.slave_access_info[(host, port)]
+            res_arr.append([num_hoops, avg_time, access_info, (host, port)])
+        total_rank_arr = {}
+        res_arr = np.array(res_arr)
+        num_hoops_arr = np.argsort(res_arr[:, 0])
+        time_arr = np.argsort(res_arr[:, 1])
+        access_arr = np.argsort(res_arr[:, 2])
+
+        for i in range(self.num_slaves):
+            total_rank_arr[all_slave_hosts[num_hoops_arr[i]]] += i*self.weight_numhoop
+            total_rank_arr[all_slave_hosts[time_arr[i]]] += i*self.weight_time
+            total_rank_arr[all_slave_hosts[access_arr[i]]] += i*self.weight_access
+        optimal_slave = min(total_rank_arr)
+        send_str = self.ANNOUNCE_OPTIMAL_SLAVE % (self.HOST, self.PORT, optimal_slave[0], optimal_slave[1])
+        self.__send_request(send_str, self.DIR_HOST, self.DIR_PORT)
+        # return optimal_slave
+
 
     def __send_request(self, data, server, port):
         """Function that sends requests to remote server"""
@@ -289,7 +308,8 @@ class TCPClient:
     def __get_directory(self, filename):
         """Send a request to the server to find the location of a directory"""
         request = self.DIRECTORY_HEADER % (self.HOST, self.PORT, filename)
-
+        # depend for the optimal slave server
+        
         return self.__send_request(request, self.DIR_HOST, self.DIR_PORT)
 
     # 文件上锁

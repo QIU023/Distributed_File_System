@@ -39,9 +39,13 @@ class DirectoryServer(TCPServer):
 
     # Load balance/Traffic Management Algorithm for slaves
     GET_SLAVE_ACCESS_STATUS_HEADER = "GET_SLAVE_ACCESS_STATUS\n\n"
-    SEND_SLAVE_ACCESS_STATUS_HEADER = "HOST: %s\tPORT: %s\tSLAVE_ACCESS_STATUS: %d\t"
+    SEND_SLAVE_ACCESS_STATUS_HEADER = "HOST: %s\tPORT: %s\tSLAVE_ACCESS_STATUS: %d\n"
     RECV_SLAVE_ACCESS_STATUS_REGEX = "HOST: [a-zA-Z0-9_.]*\nPORT: [0-9_.]*\nSLAVE_ACCESS_STATUS: [a-zA-Z0-9_./]*\n\n"
-    SEND_SLAVE_ACCESS_STATUS_HEADER_TO_CLIENT = "SLAVE_ACCESS_STATUS_TO_CLIENT: %s\n\n"
+    SEND_SLAVE_ACCESS_STATUS_HEADER_TO_CLIENT = "SLAVE_ACCESS_STATUS_TO_CLIENT:\n%s\n\n"
+    ANNOUNCE_OPTIMAL_SLAVE_REGEX = "CLIENT_HOST: [a-zA-Z0-9_.]*\nCLIENT_PORT: [0-9_.]*\nOPTIMAL_SLAVE_HOST: [a-zA-Z0-9_.]*\nOPTIMAL_SLAVE_PORT: [0-9_.]*\n\n"
+
+
+    STRATEGY_ = "Load Balancing and Traffic Management"
 
     def __init__(self, port_use=None):
         TCPServer.__init__(self, port_use, self.handler)
@@ -59,8 +63,9 @@ class DirectoryServer(TCPServer):
         self.paxos_previous_check_time = time.time()
         self.paxos_cur_stage = 0
 
-        # self.client2slaves_access_info = OrderedDict()
+        self.client_optimal_slave_dict = {}
         self.slave_access_info = {}
+        self.temp_filename_request_dict = {}
 
 
     def handler(self, message, con, addr):
@@ -80,7 +85,11 @@ class DirectoryServer(TCPServer):
             # already confirmed sum(AoK) > n / 2, sychonize data to all slaves
             self.paxos_send_alldata_to_all_slaves(con, addr, message)
         elif re.match(self.RECV_SLAVE_ACCESS_STATUS_REGEX, message):
+            # update single slave info
             self.slave_fileserver_access_update(con, addr, message)
+        elif re.match(self.ANNOUNCE_OPTIMAL_SLAVE_REGEX, message):
+            # getting best slave result from the client
+            self.get_server_part2(con, addr, message)
 
         else:
             return False
@@ -88,7 +97,7 @@ class DirectoryServer(TCPServer):
 
 
         return True
-
+        
     def get_server(self, con, addr, text):
         # Handler for file upload requests
         request = text.splitlines()
@@ -100,40 +109,62 @@ class DirectoryServer(TCPServer):
         name, ext = os.path.splitext(file)
         filename = hashlib.sha256(full_path).hexdigest() + ext
         all_slave_hosts = self.find_host(path)
-        host, port = self.slave_fileserver_distribute(all_slave_hosts, client_host, client_port, strategy='random')
+        host, port = self.slave_fileserver_distribute(all_slave_hosts, 
+            client_host, client_port, strategy=self.STRATEGY_)
 
-        if not host:
-            # The Directory doesn't exist and must be added to the db
-            server_id = self.pick_random_host()
-            self.create_dir(path, server_id)
-            all_slave_hosts = self.find_host(path)
-            host, port = self.slave_fileserver_distribute(all_slave_hosts, client_host, client_port, strategy='random')
+        if self.STRATEGY_ != "Load Balancing and Traffic Management":
+            if not host:
+                # The Directory doesn't exist and must be added to the db
+                server_id = self.pick_random_host()
+                self.create_dir(path, server_id)
+                all_slave_hosts = self.find_host(path)
+                host, port = self.slave_fileserver_distribute(all_slave_hosts, client_host, client_port, strategy='random')
 
-        # Get the list of slaves that have a copy of the file
-        slave_string = self.get_slave_string(host, port)
-        return_string = self.GET_RESPONSE % (host, port, filename, slave_string)
-        # print(return_string)
-        con.sendall(return_string)
+            # Get the list of slaves that have a copy of the file
+            slave_string = self.get_slave_string(host, port)
+            return_string = self.GET_RESPONSE % (host, port, filename, slave_string)
+            # print(return_string)
+            con.sendall(return_string)
+            return
+        else:
+            # process end of the first part in this handler loop 
+            # because the server haven't recv the client's optimal info
+            self.temp_filename_request_dict[(client_host, client_port)].append(filename)
+            # can be multiple files requested because slave access info/determined info can be lost/jammed in Network
+            return
+    
+    def get_server_part2(self, con, addr, text):
+        request = text.splitlines()
+        client_host = request[0].split(' ')[1]
+        client_port = request[1].split(' ')[1]
+        optimal_slave_host = request[2].split(' ')[1]
+        optimal_slave_port = request[3].split(' ')[1]
+        # process all requested files from optimal slave to client
+        for fi in self.temp_filename_request_dict[(client_host, client_port)]:
+            slave_string = self.get_slave_string(optimal_slave_host, optimal_slave_port)
+            return_string = self.GET_RESPONSE % (optimal_slave_host, optimal_slave_port, fi, slave_string)
+            con.sendall(return_string)
+        self.temp_filename_request_dict[(client_host, client_port)] = []
         return
 
     def send_slave_access_info2client(self, client_host, client_port):
+        # send all slave info to the client
+        tmp_str = ""
         for slave_host, slave_port in self.slave_nodes:
             access_info = self.slave_access_info[(slave_host, slave_port)]
-            tmp_str = self.SEND_SLAVE_ACCESS_STATUS_HEADER % (slave_host, slave_port, access_info)
+            tmp_str += self.SEND_SLAVE_ACCESS_STATUS_HEADER % (slave_host, slave_port, access_info)
         return_str = self.SEND_SLAVE_ACCESS_STATUS_HEADER_TO_CLIENT % tmp_str
         self.send_request(return_str, client_host, int(client_port))
         return
 
-    # 1st: num hoops
     def slave_fileserver_distribute(self, all_slave_hosts, client_host, client_port, strategy = 'random'):
         if strategy == 'random':
             chosen_host, chosen_port = random.choice(all_slave_hosts)[0]
-        elif strategy == 'Load Balancing':
-            self.send_slave_access_info2client(client_host, client_port)
-
-            pass
         elif strategy == 'Load Balancing and Traffic Management':
-            pass
+            self.send_slave_access_info2client(client_host, client_port)
+            # client get slaves info
+            chosen_host, chosen_port = None, None
+            # pass
         return chosen_host, chosen_port
 
     def slave_fileserver_access_update(self, con, addr, text):
