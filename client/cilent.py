@@ -1,5 +1,5 @@
-# 客户端 作为与用户的交互
-import socket
+# -*-coding:utf-8-*-
+# 编辑者：XuZH
 import sys
 import os
 import re
@@ -7,63 +7,92 @@ import threading
 import time
 import queue
 import base64
+import redis
+import grpc
+import Distribute_pb2
+import Distribute_pb2_grpc
+from LRU_cache import TwoQueue_Cache
 
-# 与服务器交流用的指令的正则表达式
-UPLOAD_REGEX = "upload [a-zA-Z0-9_]*."
-DOWNLOAD_REGEX = "download [a-zA-Z0-9_]*."
-DIRECTORY_REGEX = "dir [a-zA-Z0-9_/.]*"
-LOCK_REGEX = "lock [a-zA-Z0-9_/.]* [0-9]*"
 
-
-# TCP链接
-class TCPClient:
+class Cilent:
     PORT = 8000
-    HOST = "0.0.0.0"
-    DIR_PORT = 8005
-    FILE_PORT = 8006
-    LOCK_PORT = 8007
-    DIR_HOST = HOST
-    LOCK_HOST = HOST
+    HOST = "192.168.90.100"
+
+    # redis 缓存的参数：端口号、密码、设置的大小（64MB）
+    LOCAL_REDIS_PORT = 8008
+    LOCAL_REDIS_PASSWD = "aaaaaaaa"
+    LOCAL_CACHE_LIMIT = 2 ** 24
+
+    # 本地文件加锁次数上限
+    LOCK_TRY_MAX_TIME = 10
+    LOCK_TYPE_CONFLICT = "LOCK TYPE CONFLICT!!!"
+
     # 将请求先设置为常量
     UPLOAD_HEADER = "UPLOAD: %s\nDATA: %s\n\n"
     DOWNLOAD_HEADER = "DOWNLOAD: %s\n\n"
-    DIRECTORY_HEADER = "GET_SERVER: \nFILENAME: %s\n\n"
+    DIRECTORY_HEADER = "GET_SERVER: \nCLIENT_HOST: %s\nCLIENT_PORT: %s\nFILENAME: %s\n\n"
     SERVER_RESPONSE = "PRIMARY_SERVER: .*\nPORT: .*\nFILENAME: .*"
-    LOCK_HEADER = "LOCK_FILE: %s\nTime: %d\n\n"
+    LOCK_HEADER = "LOCK_FILE: %s\nLOCK_TYPE: %s\nTime: %d\n\n"
     LOCK_RESPONSE = "LOCK_RESPONSE: \nFILENAME: .*\nTIME: .*\n\n"
     FAIL_RESPONSE = "ERROR: .*\nMESSAGE: .*\n\n"
-    UNLOCK_HEADER = "UNLOCK_FILE: %s\n\n"
+    UNLOCK_HEADER = "UNLOCK_FILE: %s\nUNLOCK_TYPE: %s\n\n"
     REQUEST = "%s"
     LENGTH = 4096
+
     # 下面三行 是文件存储位置 与参考资料代码数据放一起不同，选择放另一个目录下
     CLIENT_ROOT = os.getcwd()
     CLIENT_ROOT = CLIENT_ROOT.split('\\')
-    CLIENT_ROOT[len(CLIENT_ROOT) - 1] = 'Cilent_files'
+    CLIENT_ROOT[len(CLIENT_ROOT) - 1] = 'Client_files'
     BUCKET_LOCATION = '\\'.join(CLIENT_ROOT)
 
-    # path = '\\'.join(CLIENT_ROOT)
-    # BUCKET_NAME = "ClientFiles"
-    # BUCKET_LOCATION = os.path.join(CLIENT_ROOT, BUCKET_NAME)
-
-    def __init__(self, port_use=None):
-        if not port_use:
-            self.port_use = self.PORT
-        else:
-            self.port_use = port_use
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    def __init__(self):
         self.open_files = {}
-        self.cache={}
+        self.cache_info = TwoQueue_Cache(10)
+        self.cache_used_size = 0
         self.threadQueue = queue.Queue()
 
-    # 为了对应缓存，因此需要修改，先访问缓存
-    def open(self, filename):
+    # 功能函数定义：
+
+    # 文件IO和cache功能
+    def get_file_info(self, file_istream):
+        return {
+            'access_time': 1,
+            'create_time_stamp': time.time(),
+            'access_time_stamp': time.time(),
+            'size': file_istream.__sizeof__()  # bytes ->
+        }
+
+    def write_cache(self, filename, data):
+        pop_name = self.cache_info.put(filename, self.get_file_info(data))
+        self.update_redis_cache(pop_name, filename, data, is_read=False)
+
+    def read_cache(self, filename):
+        data = self.local_redis_conn.get(filename)
+        pop_name = self.cache_info.get(filename)
+        self.update_redis_cache(pop_name, filename, data, is_read=True)
+
+        return data
+
+    def update_redis_cache(self, pop_name, filename, data, is_read=False):
+        if pop_name is not None:
+            # cache 淘汰旧值，插入新值，适用于r/w
+            self.local_redis_conn.delete(pop_name)
+            self.local_redis_conn.set(filename, data)
+        else:
+            # cache 更新已有值, 适用于write
+            if not is_read:
+                self.local_redis_conn.getset(filename, data)
+
+    # 打开文件
+    def open(self, filename, access_type='read'):
         # 缓存机制
         """Function opens a file by downloading from a remote server"""
         file_downloaded = False
         if filename not in self.open_files.keys():
-            #这里补充：不在缓存才去下载
-            if filename not in self.cache.keys():
-                # Get the info of the server hosting the file
+            # 这里补充：不在缓存才去下载
+            if filename not in self.cache_info.keys():
+                # Get the info of the server hosting the file,
+                # 涉及server分配策略！cdn负载均衡算法
                 request = self.__get_directory(filename)
                 if re.match(self.SERVER_RESPONSE, request):
                     params = request.splitlines()
@@ -71,37 +100,58 @@ class TCPClient:
                     port = int(params[1].split()[1])
                     open_file = params[2].split()[1]
                     # Get lock on file before downloading
-                    self.__lock_file(filename, 10)
-                    file_downloaded = self.__download_file(server, port, open_file)
+                    self.__lock_file(filename, access_type, 10)
+                    file_downloaded, data = self.__download_file(server, port, open_file)
                     if file_downloaded:
+                        # print("getting file from the server!")
                         self.open_files[filename] = open_file
-                        self.cache[filename]=open_file
+                        self.write_cache(filename, data)
+                    # return file_downloaded
+                else:
+                    file_downloaded = False
+                    # print("server connection error!")
+            else:
+                file_downloaded = True
+                # print("file found in local cache!")
+                # data = self.read_cache(filename)
+            # ????
+        else:
+            file_downloaded = True
+            # print("file already opened!")
         return file_downloaded
 
-    def close(self, filename):
-        """Function closes a file by uploading it and removing the local copy"""
+    # 关文件
+    def close(self, filename, access_type='read'):
+        """Function closes a file by uploading it, update cache and removing the local opening"""
         file_uploaded = False
         if filename in self.open_files.keys():
             request = self.__get_directory(filename)
             if re.match(self.SERVER_RESPONSE, request):
                 # Remove lock from file
-                self.__unlock_file(filename)
-                params = request.splitlines()
-                server = params[0].split()[1]
-                open_file = params[2].split()[1]
-                # Upload the file and
-                file_uploaded = self.__upload_file(server, open_file)
-                if file_uploaded:
-                    path = os.path.join(self.CLIENT_ROOT, self.BUCKET_NAME)
-                    path = os.path.join(path, self.open_files[filename])
-                    '''
-                    不删，用作缓存
-                    if os.path.exists(path):
-                        os.remove(path)
-                    '''
-                    del self.open_files[filename]
+                if access_type == 'read':
+                    self.__unlock_file(filename, access_type)
+                elif access_type == 'write':
+                    params = request.splitlines()
+                    server = params[0].split()[1]
+                    open_file = params[2].split()[1]
+                    # Upload the file and
+                    file_uploaded = self.__upload_file(server, open_file)
+                    if file_uploaded:
+                        # path = os.path.join(self.CLIENT_ROOT, self.BUCKET_NAME)
+                        # path = os.path.join(path, self.open_files[filename])
+
+                        data = self.read(filename)
+                        self.write_cache(filename, data)
+                        del self.open_files[filename]
+                        self.__unlock_file(filename, access_type)
+                # else:
+                # print("lock type error")
+            # else:
+            # print("server error!")
+
         return file_uploaded
 
+    # 读文件
     def read(self, filename):
         """Function that reads from an open file"""
         if filename in self.open_files.keys():
@@ -112,6 +162,7 @@ class TCPClient:
             return data
         return None
 
+    # 写文件
     def write(self, filename, data):
         """Function that writes to an open file"""
         success = False
@@ -123,36 +174,8 @@ class TCPClient:
             success = True
         return success
 
-    def __send_request(self, data, server, port):
-        """Function that sends requests to remote server"""
-        return_data = ""
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
-        sock.connect((server, port))
-        sock.sendall(self.REQUEST % data)
-
-        # Loop until all data received
-        while "\n\n" not in return_data:
-            data = sock.recv(self.LENGTH)
-            if len(data) == 0:
-                break
-            return_data += data
-
-        # Close and dereference the socket
-        sock.close()
-        sock = None
-        return return_data
-
-    def __raw_request(self, string):
-        """Send a raw request to remote server"""
-        return_data = ""
-        # Do nothing if the string is empty or socket doesn't exist
-        if len(string) > 0:
-            # Create socket if it doesn't exist
-            return_data = self.__send_request(string + "\n\n")
-        return return_data
-
-    def __upload_file(self, server, filename):
+    # 上传
+    def __upload_file(self, filename):
         """Send a request to the server to upload a file"""
         path = os.path.join(self.BUCKET_LOCATION, filename)
 
@@ -162,62 +185,93 @@ class TCPClient:
         data = base64.b64encode(data)
 
         request = self.UPLOAD_HEADER % (filename, data)
-        return self.__send_request(request, server, self.FILE_PORT)
+        # 调用fileserver的upload
+        with grpc.insecure_channel("{0}:{1}".format(self.HOST, self.PORT)) as channel:
+            dir_cil = Distribute_pb2_grpc.File_ServerStub(channel=channel)
+            response = dir_cil.upload_file(Distribute_pb2.file_request(message=request))
+        return response
 
     # 下载文件 考虑同名覆盖的问题
-    def __download_file(self, server, port, filename):
+    def __download_file(self, filename):
         """Send a request to the server to download a file"""
         path = os.path.join(self.BUCKET_LOCATION, filename)
         # Download message containing file data and then base64 decode the data
         request = self.DOWNLOAD_HEADER % (filename)
-        request_data = self.__send_request(request, server, port).splitlines()[0]
+        # 调用download
+        with grpc.insecure_channel("{0}:{1}".format(self.HOST, self.PORT)) as channel:
+            dir_cil = Distribute_pb2_grpc.File_ServerStub(channel=channel)
+            response = dir_cil.download_file(Distribute_pb2.dir_request(message=request))
+        request_data = response
         data = request_data.split()[0]
 
         data = base64.b64decode(data)
         file_handle = open(path, "wb+")
         file_handle.write(data)
-        return True
+        return True, data
 
-    # 获取文件位置
+    # 获取服务器
     def __get_directory(self, filename):
         """Send a request to the server to find the location of a directory"""
-        request = self.DIRECTORY_HEADER % filename
+        request = self.DIRECTORY_HEADER % (self.HOST, self.PORT, filename)
+        # 调用getserver
+        with grpc.insecure_channel("{0}:{1}".format(self.HOST, self.PORT)) as channel:
+            dir_cil = Distribute_pb2_grpc.Direct_ServerStub(channel=channel)
+            response = dir_cil.get_server(Distribute_pb2.dir_request(message=request))
+        return response
+        # self.__send_request(request, self.DIR_HOST, self.DIR_PORT)
 
-        return self.__send_request(request, self.DIR_HOST, self.DIR_PORT)
-
-    # 文件上锁
-    def __lock_file(self, filename, lock_time):
+    # 上锁
+    def __lock_file(self, filename, lock_type, lock_time):
         """Send a request to the server to locks a file"""
-        request = self.LOCK_HEADER % (filename, lock_time)
-        request_data = self.__send_request(request, self.LOCK_HOST, self.LOCK_PORT)
-        if re.match(self.FAIL_RESPONSE, request_data):
-            # If failed to lock the file, wait a time and try again
-            request_data = request_data.splitlines()
-            wait_time = float(request_data[1].split()[1])
-            time.sleep(wait_time)
-            self.__lock_file(filename, lock_time)
-        return True
+        request = self.LOCK_HEADER % (filename, lock_type, lock_time)
+        lock_try_time = 0
+        # 调用lock
+        with grpc.insecure_channel("{0}:{1}".format(self.HOST, self.PORT)) as channel:
+            dir_cil = Distribute_pb2_grpc.Lock_ServerStub(channel=channel)
+            response = dir_cil.get_lock(Distribute_pb2.lock_Request(message=request))
+        # request_data = self.__send_request(request, self.LOCK_HOST, self.LOCK_PORT)
+        request_data = response
+        if re.match(self.LOCK_TYPE_CONFLICT, request_data):
+            # print(self.LOCK_TYPE_CONFLICT)
+            return False
+
+        else:
+            while re.match(self.FAIL_RESPONSE, request_data) and lock_try_time < self.LOCK_TRY_MAX_TIME:
+                # If failed to lock the file, wait a time and try again
+                # cannot recursive calling like this !!!
+                request_data = request_data.splitlines()
+                wait_time = float(request_data[1].split()[1])
+                time.sleep(wait_time)
+                with grpc.insecure_channel("{0}:{1}".format(self.HOST, self.PORT)) as channel:
+                    dir_cil = Distribute_pb2_grpc.Lock_ServerStub(channel=channel)
+                    response = dir_cil.get_lock(Distribute_pb2.lock_Request(message=request))
+                request_data = response
+                lock_try_time += 1
+
+            return not re.match(self.FAIL_RESPONSE, request_data)
 
     # 解锁
-    def __unlock_file(self, filename):
+    def __unlock_file(self, filename, lock_type):
         """Send a request to the server to unlock a file"""
-        request = self.UNLOCK_HEADER % filename
-        return self.__send_request(request, self.LOCK_HOST, self.LOCK_PORT)
+        request = self.UNLOCK_HEADER % (filename, lock_type)
+        with grpc.insecure_channel("{0}:{1}".format(self.HOST, self.PORT)) as channel:
+            dir_cil = Distribute_pb2_grpc.Lock_ServerStub(channel=channel)
+            response = dir_cil.get_unlock(Distribute_pb2.lock_Request(message=request))
+        return response
 
     # 判断文件名是否已经重名
-    def Is_in(self,filename):
+    def Is_in(self, filename):
         if not self.__get_directory(filename):
             return False
         return True
 
-    # 创建文件
-    def __create_file(self,filename):
+    # 创建文件（不完善）
+    def create_file(self, filename):
         """创建空文件并上传至Server或者让Server创建同名文件"""
         if not self.Is_in(filename):
             full_path = '\\'.join(self.BUCKET_LOCATION)
             newfile = open(full_path, 'w')
             newfile.close()
-            #这里应该有点问题
             '''
             request = self.__get_directory(filename)
             if re.match(self.SERVER_RESPONSE, request):
@@ -228,7 +282,38 @@ class TCPClient:
                 open_file = params[2].split()[1]
                 # Upload the file and
                 file_uploaded = self.__upload_file(server, open_file)
-            self.__upload_file(server,filename)
             '''
+            self.__upload_file(filename)
             return True
         return False
+
+    # 列出文件
+    def list_files(self):
+        return os.listdir(self.BUCKET_LOCATION)
+
+
+# 需要写客户端main的
+def main():
+    cilent = Cilent();
+    while True:
+        choose = input("请输入需要服务的类型（数字）：1.获取客户端文件列表 2.read文件 3.write文件 \n 4.create文件  5.退出\n")
+        choose = int(choose)
+        if choose == 1:
+            print(cilent.list_files())
+        elif choose == 2:
+            filename = input("请输入文件名：（确保服务器中有）")
+            data = cilent.read(filename)
+            print(data)
+        elif choose == 3:
+            filename = input("请输入文件名：（确保服务器中有）")
+            data = input("请输入写入文件的信息：")
+            cilent.write(filename, data)
+        elif choose == 4:
+            filename = input("请输入文件名：")
+            cilent.create_file(filename)
+        else:
+            break
+
+
+if __name__ == '__main__':
+    main()
