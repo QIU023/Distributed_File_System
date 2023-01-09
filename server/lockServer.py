@@ -1,122 +1,129 @@
-# LockServer.py
-# Project CS4032
-# Cathal Geoghegan
-
+# -*-coding:utf-8-*-
+# 编辑者：XuZH
+import grpc
+import Distribute_pb2
+import Distribute_pb2_grpc
+from concurrent import futures
 import socket
 import re
 import sys
 import time
 import sqlite3 as db
+from collections import defaultdict
 
 
-from tcpServer import TCPServer
-
-
-class LockServer(TCPServer):
-    LOCK_REGEX = "LOCK_FILE: [a-zA-Z0-9_./]*\nTime: [0-9]*\n\n"
-    UNLOCK_REGEX = "UNLOCK_FILE: [a-zA-Z0-9_./]*\n\n"
-    LOCK_RESPONSE = "LOCK_RESPONSE: \nFILENAME: %s\nTIME: %d\n\n"
+# 由于grpc包含Tcp的实现，所以无需再借助tcpserver
+class Lock_Server(Distribute_pb2_grpc.Lock_ServerServicer):
+    LOCK_RESPONSE = "LOCK_RESPONSE: \nLOCK_TYPE: \nFILENAME: %s\nTIME: %d\n\n"
     FAIL_RESPONSE = "ERROR: %d\nMESSAGE: %s\n\n"
-    DATABASE = 'Database/locking.db'
+    DATABASE = "Database/lock.db"
+    # 差个__init__
 
-    def __init__(self, port_use=None):
-        TCPServer.__init__(self, port_use, self.handler)
-        self.create_table()
+    def get_lock(self, request, context):
+        _request = request.message.splitlines()
+        full_path = _request[0].split()[1]  # 获取目标路径
+        lock_type = _request[1].split()[1]  # 锁类型：互斥/兼容/...
+        duration = int(_request[2].split()[1])  # 获取时间
 
-    #匹配正则表达式，确定操作上锁or解锁并调用函数
-    def handler(self, message, con, addr):
-        if re.match(self.LOCK_REGEX, message):
-            self.get_lock(con, addr, message)
-        elif re.match(self.UNLOCK_REGEX, message):
-            self.get_unlock(con, addr, message)
-        else:
-            return False
-        return True
-
-    def get_lock(self, con, addr, text):
-        # Handler for file locking requests
-        request = text.splitlines()
-        full_path = request[0].split()[1]#获取目标路径
-        duration = int(request[1].split()[1])#获取时间
-        lock_time = self.lock_file(full_path, duration)
+        lock_time = self.lock_file(full_path, lock_type, duration)
         if lock_time:
-            return_string = self.LOCK_RESPONSE % (full_path, lock_time)
+            return_string = self.LOCK_RESPONSE % (full_path, lock_type, lock_time)
         else:
             return_string = self.FAIL_RESPONSE % (0, str(duration))
-        con.sendall(return_string)
-        return
+        return Distribute_pb2.lock_reply(result=return_string)
 
-    def get_unlock(self, con, addr, text):
-        # Handler for file unlocking requests
-        request = text.splitlines()
-        full_path = request[0].split()[1]
-        lock_time = self.unlock_file(full_path)
+    def get_unlock(self, request, context):
+        _request = request.message.splitlines()
+        full_path = _request[0].split()[1]  # 获取目标路径
+        lock_type = _request[1].split()[1]  # 锁类型：互斥/兼容/...
+        lock_time = self.unlock_file(full_path, lock_type)
+        return_string = self.LOCK_RESPONSE % (full_path, lock_type, lock_time)
+        return Distribute_pb2.lock_reply(result=return_string)
 
-        return_string = self.LOCK_RESPONSE % (full_path, lock_time)
-        con.sendall(return_string)
-        return
-
-    def lock_file(self, path, lock_period):
+    def lock_file(self, path, lock_type, lock_period):
         # Function that attempts to lock a file
-        return_time = -1
+        # lock_type: read/write
         con = db.connect(self.DATABASE)
-        # Exclusive r/w access to the db
-        con.isolation_level = 'EXCLUSIVE'
-        con.execute('BEGIN EXCLUSIVE')
+        if lock_type == 'read':
+            con.isolation_level = 'SHARED'
+            # con.execute('BEGIN PENDING')
+            con.execute('BEGIN SHARED')
+
+        elif lock_type == 'write':
+            con.isolation_level = 'EXCLUSIVE'
+            con.execute('BEGIN EXCLUSIVE')
+
+        else:
+            con.close()
+            return False
+            # print('lock_type Error!')
+
         current_time = int(time.time())
         end_time = current_time + lock_period
-
+        # '''
         cur = con.cursor()
+        # 找锁
         cur.execute("SELECT count(*) FROM Locks WHERE Path = ? AND Time > ?", (path, current_time))
         count = cur.fetchone()[0]
-        if count is 0:
+        if count == 0:
+            # 新锁
             cur.execute("INSERT INTO Locks (Path, Time) VALUES (?, ?)", (path, end_time))
             return_time = end_time
         else:
             return_time = False
-        # End Exclusive access to the db
+        # '''
+        # End r/w access to the db
         con.commit()
         con.close()
         return return_time
 
-    def unlock_file(self, path):
+    def unlock_file(self, lock_type, path):
         # Function that attempts to unlock a file
-        return_time = -1
         con = db.connect(self.DATABASE)
         # Exclusive r/w access to the db
-        con.isolation_level = 'EXCLUSIVE'
-        con.execute('BEGIN EXCLUSIVE')
+        if lock_type == 'read':
+            con.isolation_level = 'SHARED'
+            # con.execute('BEGIN PENDING')
+            con.execute('BEGIN SHARED')
+
+        elif lock_type == 'write':
+            con.isolation_level = 'EXCLUSIVE'
+            con.execute('BEGIN EXCLUSIVE')
+        else:
+            con.close()
+            return False
         current_time = int(time.time())
         cur = con.cursor()
         cur.execute("SELECT count(*) FROM Locks WHERE Path = ? AND Time > ?", (path, current_time))
         count = cur.fetchone()[0]
-        if count is 0:
+        #曾经是is
+        if count == 0:
             cur.execute("UPDATE Locks SET Time=? WHERE Path = ? AND Time > ?", (current_time, path, current_time))
-        # End Exclusive access to the db
+        # End r/w access to the db
         con.commit()
         con.close()
         return current_time
 
-    def create_table(cls):
-        # Function that creates the tables for the locking servers database
-        con = db.connect(cls.DATABASE)
-        with con:
-            cur = con.cursor()
-            cur.execute("CREATE TABLE IF NOT EXISTS Locks(Id INTEGER PRIMARY KEY, Path TEXT, Time INT)")
-            cur.execute("CREATE INDEX IF NOT EXISTS PATHS ON Locks(Path)")
-
 
 def main():
+    # 多线程服务器
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+    # 实例化 计算len的类
+    servicer = Lock_Server()
+    # 注册本地服务,方法ComputeServicer只有这个是变的
+    Distribute_pb2_grpc.add_Lock_ServerServicer_to_server(servicer, server)
+    # 监听端口
+    server.add_insecure_port('127.0.0.1:19999')
+    # 开始接收请求进行服务
+    server.start()
+    # 使用 ctrl+c 可以退出服务
     try:
-        if len(sys.argv) > 1 and sys.argv[1].isdigit():
-            port = int(sys.argv[1])
-            server = LockServer(port)
-        else:
-            server = LockServer()
-        server.listen()
-    except socket.error, msg:
-        print "Unable to create socket connection: " + str(msg)
-        con = None
+        print("running...")
+        time.sleep(1000)
+    except KeyboardInterrupt:
+        print("stopping...")
+        server.stop(0)
 
 
-if __name__ == "__main__": main()
+if __name__ == "__main__":
+    main()
