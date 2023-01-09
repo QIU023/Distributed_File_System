@@ -1,0 +1,48 @@
+syntax = "proto3";
+package Distribute;
+
+
+
+service Lock_Server {
+  rpc get_lock (lock_Request) returns (lock_reply) {}
+  rpc get_unlock (lock_Request) returns (lock_reply) {}
+}
+message lock_Request{
+  string message = 1;
+}
+message  lock_reply{
+  string result = 1;
+}
+
+
+
+service Direct_Server {
+  rpc get_server(dir_request) returns (dir_reply) {}
+  rpc get_slaves(dir_request) returns (dir_reply) {}
+  rpc paxos_update_response_status (dir_request) returns(dir_reply) {}
+  rpc paxos_send_alldata_to_all_slaves (dir_request) returns (dir_reply) {}
+  rpc slave_fileserver_access_update (dir_request) returns (dir_reply) {}
+}
+message dir_request {
+  string message = 1;
+}
+message dir_reply {
+  string result = 1;
+}
+
+
+service File_Server {
+  rpc upload_file (file_request) returns (file_reply) {}
+  rpc download_file (file_request) returns (file_reply) {}
+  rpc update_file (file_request) returns (file_reply) {}
+  rpc paxos_prepare_response (file_request) returns (file_reply) {}
+  rpc paxos_accept_response (file_request) returns (file_reply) {}
+  rpc paxos_send_acceptV (file_request) returns (file_reply) {}
+  rpc update_all (file_request) returns (file_reply) {}
+}
+message file_request{
+  string message = 1;
+}
+message file_reply {
+    string result = 1;
+}

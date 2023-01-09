@@ -1,9 +1,9 @@
-
 from collections import OrderedDict
 import time
 
+
 class TwoQueue_Cache:
- 
+
     # initialising capacity
     def __init__(self, capacity: int):
         self.lru_queue = OrderedDict()
@@ -15,7 +15,7 @@ class TwoQueue_Cache:
     def get(self, key: str):
         if key not in self.lru_queue and key not in self.fifo_queue:
             return None
-        else: 
+        else:
             pop_name = None
             if key in self.fifo_queue:
                 pop_name = self.move_from_fifo2lru(key)
@@ -29,11 +29,11 @@ class TwoQueue_Cache:
         self.lru_queue[key] = self.fifo_queue[key]
         self.fifo_size -= self.fifo_queue[key]['size']
         self.lru_size += self.fifo_queue[key]['size']
-        if self.lru_size > 0.5*self.size_capacity:
-            pop_name, _ = self.lru_queue.popitem(last = False)
+        if self.lru_size > 0.5 * self.size_capacity:
+            pop_name, _ = self.lru_queue.popitem(last=False)
         del self.fifo_queue[key]
         return pop_name
- 
+
     def put(self, key: str, value):
         if key not in self.lru_queue and key not in self.fifo_queue:
             # 插入新值
@@ -42,12 +42,12 @@ class TwoQueue_Cache:
             pop_name = None
 
             self.fifo_size += self.fifo_queue[key]['size']
-            if self.fifo_size > 0.5*self.size_capacity:
-                pop_name, _ = self.fifo_queue.popitem(last = False)
+            if self.fifo_size > 0.5 * self.size_capacity:
+                pop_name, _ = self.fifo_queue.popitem(last=False)
             return pop_name
         else:
             if key in self.fifo_queue:
-            # 更新已有值
+                # 更新已有值
                 self.move_from_fifo2lru(key)
             else:
                 self.lru_queue.move_to_end(key)
