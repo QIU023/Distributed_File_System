@@ -1,5 +1,5 @@
 # -*-coding:utf-8-*-
-# 编辑者：XuZH
+# 编辑者：QiuYQ, XuZH
 import socket
 import os
 import re
@@ -184,7 +184,7 @@ class File_Server(Distribute_pb2_grpc.File_ServerServicer):
         return_list = []
         # 这里需要向dir获取目录，待会修改，同样需要
         request_data = self.GET_SLAVES_HEADER % (self.HOST, self.PORT)
-        lines = self.send_request(request_data, self.DIR_HOST, self.DIR_PORT).splitlines()
+        lines = self.my_send_request(request_data, self.DIR_HOST, self.DIR_PORT).splitlines()
 
         slaves = lines[1:-1]
         for i in range(0, len(slaves), 2):

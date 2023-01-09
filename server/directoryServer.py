@@ -1,5 +1,5 @@
 # -*-coding:utf-8-*-
-# 编辑者：XuZH
+# 编辑者：QiuYQ, XuZH
 import grpc
 import Distribute_pb2
 import Distribute_pb2_grpc
