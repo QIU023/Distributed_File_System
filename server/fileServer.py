@@ -23,6 +23,9 @@ class File_Server(Distribute_pb2_grpc.File_ServerServicer):
     SERVER_ROOT = os.getcwd()
     BUCKET_NAME = "DirectoryServerFiles"
     BUCKET_LOCATION = os.path.join(SERVER_ROOT, BUCKET_NAME)
+    DIR_HOST = "0.0.0.0"
+    DIR_PORT = 8005         # master/proposer's port
+    
     # 请求定义
     GET_SLAVES_HEADER = "GET_SLAVES: %s\nPORT: %s\n\n"
     UPDATE_HEADER = "UPDATE: %s\nDATA: %s\n\n"
@@ -36,21 +39,48 @@ class File_Server(Distribute_pb2_grpc.File_ServerServicer):
     UPLOAD_HEADER = "UPLOAD: %s\tDATA: %s\n\n"
     RECVALL_DATA_FROM_CHOSEN_SLAVE_REGEX = "SENDALL_DATA_TO_ALL_SLAVES_HEADER\n[a-zA-Z0-9_.]*"
 
+    SEND_SLAVE_ACCESS_STATUS_HEADER = "HOST: %s\nPORT: %s\nSLAVE_ACCESS_STATUS: %d\n\n"
+    access_stat_interval = 100000
+
+
     def __init__(self):
         self.BUCKET_LOCATION = os.path.join(self.BUCKET_LOCATION, str(self.PORT))
         self.slave_accepted_timestamp = time.time()
-        self.access_status = {}
+        self.access_count = []
+
+    def my_send_request(self, send_str, host, port):        
+        if type(port) == str:
+            port = int(port)
+        with grpc.insecure_channel("{0}:{1}".format(host, port)) as channel:
+            dir_cil=Distribute_pb2_grpc.File_ServerStub(channel=channel)
+            return_str = dir_cil.send_bare_info(Distribute_pb2.file_request(message=send_str))
+        return return_str
+
+    def send_bare_info(self, request, context):
+        return Distribute_pb2.file_reply(result=request.message)
+
+    def modify_access_status(self):
+        curr_time = time.time()
+        self.access_count.append(curr_time)
+
+        while (len(self.access_count) > 0 and \
+            self.access_count[0] < curr_time - self.access_stat_interval):
+            del self.access_count[0]
+
+    def send_bare_info(self, request, context):
+        return Distribute_pb2.file_reply(result=request.message)
 
     # 被调用的功能函数
     def upload_file(self, request, context):
+        self.modify_access_status()
         # Handler for file upload requests
         filename, data = self.execute_write(request.message)
         return_string = self.UPLOAD_RESPONSE
-        # con.sendall(return_string)
         self.update_slaves(filename, data)
         return Distribute_pb2_grpc.file_reply(result=return_string)
 
     def download_file(self, request, context):
+        self.modify_access_status()
         # Handler for file download requests
         request = request.message.splitlines()
         filename = request[0].split()[1]
@@ -59,36 +89,32 @@ class File_Server(Distribute_pb2_grpc.File_ServerServicer):
         file_handle = open(path, "w+")
         data = file_handle.read()
         return_string = self.DOWNLOAD_RESPONSE % (base64.b64encode(data))
-        # con.sendall(return_string)
         return Distribute_pb2_grpc.file_reply(result=return_string)
 
     def update_file(self, request, context):
+        self.modify_access_status()
         # Handler for file update requests
         self.execute_write(request.message)
         return_string = self.UPLOAD_RESPONSE
-        # con.sendall(return_string)
         return Distribute_pb2_grpc.file_reply(result=return_string)
 
     def update_all(self, request, context):
+        self.modify_access_status()
         for data_i in request.message.splitlines():
             data_i = data_i.split('\t')
             self.execute_write('\n'.join(data_i))
         # 不知道要不要补返回信息
         return
-    
-    def update_all(self, con, addr, text):
-        for data_i in text.splitlines():
-            data_i = data_i.split('\t')
-            self.execute_write('\n'.join(data_i))
-        return
 
-    def send_access_info(self, con, addr, text):
+    def send_access_info(self, request, context):
+        self.modify_access_status()
         return_string = self.SEND_SLAVE_ACCESS_STATUS_HEADER % (self.HOST, self.PORT, len(self.access_count))
-        self.send_request(return_string, self.DIR_HOST, self.DIR_PORT)
-        return
-
+        # self.send_request(return_string, self.DIR_HOST, self.DIR_PORT)
+        return Distribute_pb2_grpc.file_reply(result=return_string) 
+        # not sure if it's sent to directory server
 
     def paxos_accept_response(self, request, context):
+        self.modify_access_status()
         # Stage 2
         # Acceptor: response to the accept from the proposer
         _request = request.message.splitlines()
@@ -100,13 +126,10 @@ class File_Server(Distribute_pb2_grpc.File_ServerServicer):
             self.slave_accepted_timestamp = accept_timestamp
             response_info = "AoK"
         response_str = self.ACCEPTOR_AOK_HEADER % response_info
-        with grpc.insecure_channel("{0}:{1}".format(self.HOST, self.PORT)) as channel:
-            dir_cil=Distribute_pb2_grpc.Direct_ServerStub(channel=channel)
-            response=dir_cil.paxos_update_response_status(Distribute_pb2.dir_request(message=response_str))
-        # self.send_request(response_str, self.DIR_HOST, self.DIR_PORT)
-
+        return Distribute_pb2_grpc.file_reply(result=response_str)
 
     def paxos_prepare_response(self, request, context):
+        self.modify_access_status()
         # Stage 1
         # Acceptor: response to the prepare from the proposer
         _request = request.splitlines()
@@ -122,13 +145,12 @@ class File_Server(Distribute_pb2_grpc.File_ServerServicer):
             response_info = "PoK"
             response_str = self.ACCEPTOR_POK_HEADER % (
                 self.HOST, str(self.PORT), response_info, slave_cur_timestamp)
-        with grpc.insecure_channel("{0}:{1}".format(self.HOST, self.PORT)) as channel:
-            dir_cil=Distribute_pb2_grpc.Direct_ServerStub(channel=channel)
-            response=dir_cil.paxos_update_response_status(Distribute_pb2.dir_request(message=response_str))
-        # self.send_request(response_str, self.DIR_HOST, self.DIR_PORT)
+        return Distribute_pb2_grpc.file_reply(result=response_str)
 
     # 有Dir请求
     def paxos_send_acceptV(self, request, context):
+        self.modify_access_status()
+
         all_files_info = os.listdir(self.BUCKET_LOCATION)
         all_files_str = ""
         acceptor_cur_timestamp = time.time()
@@ -137,7 +159,11 @@ class File_Server(Distribute_pb2_grpc.File_ServerServicer):
             file_handle = open(filepath, 'r')
             data = file_handle.read()
             all_files_str += self.UPLOAD_HEADER % (filename, base64.b64encode(data))
-        self.send_request(all_files_str, self.DIR_HOST, self.DIR_PORT)
+        with grpc.insecure_channel("{0}:{1}".format(self.HOST, self.PORT)) as channel:
+            dir_cil=Distribute_pb2_grpc.Direct_ServerStub(channel=channel)
+            response=dir_cil.paxos_update_response_status(Distribute_pb2.dir_request(message=all_files_str))
+        return Distribute_pb2_grpc.file_reply(result=all_files_str) 
+        # self.send_request(all_files_str, self.DIR_HOST, self.DIR_PORT)
 
     # 底层函数
     def execute_write(self, text):
@@ -157,7 +183,7 @@ class File_Server(Distribute_pb2_grpc.File_ServerServicer):
         # Function that operate the slave to get the list of slaves (including itself) from host
         return_list = []
         # 这里需要向dir获取目录，待会修改，同样需要
-        request_data = self.GET_SLAVES_HEADER % (self.HOST, self.PORT,)
+        request_data = self.GET_SLAVES_HEADER % (self.HOST, self.PORT)
         lines = self.send_request(request_data, self.DIR_HOST, self.DIR_PORT).splitlines()
 
         slaves = lines[1:-1]
@@ -167,55 +193,13 @@ class File_Server(Distribute_pb2_grpc.File_ServerServicer):
             return_list.append((host, port))
         return return_list
 
-    def paxos_prepare_response(self, con, addr, text):
-        # Stage 1
-        # Acceptor: response to the prepare from the proposer
-        request = text.splitlines()
-        prepare_timestamp = int(request[0].split()[1])
-        response_info = ""
-        if prepare_timestamp <= self.slave_accepted_timestamp:
-            response_info = "error"
-            response_str = self.ACCEPTOR_POK_HEADER % (
-                self.HOST, str(self.PORT), response_info, "null")
-        else:
-            self.slave_accepted_timestamp = prepare_timestamp
-            slave_cur_timestamp = time.time()
-            response_info = "PoK"
-            response_str = self.ACCEPTOR_POK_HEADER % (
-                self.HOST, str(self.PORT), response_info, slave_cur_timestamp)
-        self.send_request(response_str, self.DIR_HOST, self.DIR_PORT)
-
-    def paxos_accept_response(self, con, addr, text):
-        # Stage 2
-        # Acceptor: response to the accept from the proposer
-        request = text.splitlines()
-        accept_timestamp = int(request[0].split()[1])
-        response_info = ""
-        if accept_timestamp <= self.slave_accepted_timestamp:
-            response_info = "error"
-        else:
-            self.slave_accepted_timestamp = accept_timestamp
-            response_info = "AoK"
-        response_str = self.ACCEPTOR_AOK_HEADER % response_info
-        self.send_request(response_str, self.DIR_HOST, self.DIR_PORT)
-
-    def paxos_send_acceptV(self, con, addr, text):
-        all_files_info = os.listdir(self.BUCKET_LOCATION)
-        all_files_str = ""
-        acceptor_cur_timestamp = time.time()
-        for filename in all_files_info:
-            filepath = os.path.join(self.BUCKET_LOCATION, filename)
-            file_handle = open(filepath, 'r')
-            data = file_handle.read()
-            all_files_str += self.UPLOAD_HEADER % (filename, base64.b64encode(data))
-        self.send_request(all_files_str, self.DIR_HOST, self.DIR_PORT)
     # 有Dir请求
     def update_slaves(self, filename, data):
         # Function that gets all the slaves and updates file on them
         slaves = self.get_slaves()
         update = self.UPDATE_HEADER % (filename, base64.b64encode(data))
         for (host, port) in slaves:
-            self.send_request(update, host, int(port))
+            self.my_send_request(update, host, port)
         return
 
 

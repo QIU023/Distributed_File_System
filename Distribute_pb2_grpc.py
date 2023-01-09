@@ -108,6 +108,11 @@ class Direct_ServerStub(object):
         Args:
             channel: A grpc.Channel.
         """
+        self.send_bare_info = channel.unary_unary(
+                '/Distribute.Direct_Server/send_bare_info',
+                request_serializer=Distribute__pb2.dir_request.SerializeToString,
+                response_deserializer=Distribute__pb2.dir_reply.FromString,
+                )
         self.get_server = channel.unary_unary(
                 '/Distribute.Direct_Server/get_server',
                 request_serializer=Distribute__pb2.dir_request.SerializeToString,
@@ -133,10 +138,21 @@ class Direct_ServerStub(object):
                 request_serializer=Distribute__pb2.dir_request.SerializeToString,
                 response_deserializer=Distribute__pb2.dir_reply.FromString,
                 )
+        self.get_server_part2 = channel.unary_unary(
+                '/Distribute.Direct_Server/get_server_part2',
+                request_serializer=Distribute__pb2.dir_request.SerializeToString,
+                response_deserializer=Distribute__pb2.dir_reply.FromString,
+                )
 
 
 class Direct_ServerServicer(object):
     """Missing associated documentation comment in .proto file."""
+
+    def send_bare_info(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
 
     def get_server(self, request, context):
         """Missing associated documentation comment in .proto file."""
@@ -168,9 +184,20 @@ class Direct_ServerServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def get_server_part2(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_Direct_ServerServicer_to_server(servicer, server):
     rpc_method_handlers = {
+            'send_bare_info': grpc.unary_unary_rpc_method_handler(
+                    servicer.send_bare_info,
+                    request_deserializer=Distribute__pb2.dir_request.FromString,
+                    response_serializer=Distribute__pb2.dir_reply.SerializeToString,
+            ),
             'get_server': grpc.unary_unary_rpc_method_handler(
                     servicer.get_server,
                     request_deserializer=Distribute__pb2.dir_request.FromString,
@@ -196,6 +223,11 @@ def add_Direct_ServerServicer_to_server(servicer, server):
                     request_deserializer=Distribute__pb2.dir_request.FromString,
                     response_serializer=Distribute__pb2.dir_reply.SerializeToString,
             ),
+            'get_server_part2': grpc.unary_unary_rpc_method_handler(
+                    servicer.get_server_part2,
+                    request_deserializer=Distribute__pb2.dir_request.FromString,
+                    response_serializer=Distribute__pb2.dir_reply.SerializeToString,
+            ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
             'Distribute.Direct_Server', rpc_method_handlers)
@@ -205,6 +237,23 @@ def add_Direct_ServerServicer_to_server(servicer, server):
  # This class is part of an EXPERIMENTAL API.
 class Direct_Server(object):
     """Missing associated documentation comment in .proto file."""
+
+    @staticmethod
+    def send_bare_info(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/Distribute.Direct_Server/send_bare_info',
+            Distribute__pb2.dir_request.SerializeToString,
+            Distribute__pb2.dir_reply.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
 
     @staticmethod
     def get_server(request,
@@ -291,6 +340,23 @@ class Direct_Server(object):
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
 
+    @staticmethod
+    def get_server_part2(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/Distribute.Direct_Server/get_server_part2',
+            Distribute__pb2.dir_request.SerializeToString,
+            Distribute__pb2.dir_reply.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
 
 class File_ServerStub(object):
     """Missing associated documentation comment in .proto file."""
@@ -301,6 +367,11 @@ class File_ServerStub(object):
         Args:
             channel: A grpc.Channel.
         """
+        self.send_bare_info = channel.unary_unary(
+                '/Distribute.File_Server/send_bare_info',
+                request_serializer=Distribute__pb2.file_request.SerializeToString,
+                response_deserializer=Distribute__pb2.file_reply.FromString,
+                )
         self.upload_file = channel.unary_unary(
                 '/Distribute.File_Server/upload_file',
                 request_serializer=Distribute__pb2.file_request.SerializeToString,
@@ -336,10 +407,21 @@ class File_ServerStub(object):
                 request_serializer=Distribute__pb2.file_request.SerializeToString,
                 response_deserializer=Distribute__pb2.file_reply.FromString,
                 )
+        self.send_access_info = channel.unary_unary(
+                '/Distribute.File_Server/send_access_info',
+                request_serializer=Distribute__pb2.file_request.SerializeToString,
+                response_deserializer=Distribute__pb2.file_reply.FromString,
+                )
 
 
 class File_ServerServicer(object):
     """Missing associated documentation comment in .proto file."""
+
+    def send_bare_info(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
 
     def upload_file(self, request, context):
         """Missing associated documentation comment in .proto file."""
@@ -383,9 +465,20 @@ class File_ServerServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def send_access_info(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_File_ServerServicer_to_server(servicer, server):
     rpc_method_handlers = {
+            'send_bare_info': grpc.unary_unary_rpc_method_handler(
+                    servicer.send_bare_info,
+                    request_deserializer=Distribute__pb2.file_request.FromString,
+                    response_serializer=Distribute__pb2.file_reply.SerializeToString,
+            ),
             'upload_file': grpc.unary_unary_rpc_method_handler(
                     servicer.upload_file,
                     request_deserializer=Distribute__pb2.file_request.FromString,
@@ -421,6 +514,11 @@ def add_File_ServerServicer_to_server(servicer, server):
                     request_deserializer=Distribute__pb2.file_request.FromString,
                     response_serializer=Distribute__pb2.file_reply.SerializeToString,
             ),
+            'send_access_info': grpc.unary_unary_rpc_method_handler(
+                    servicer.send_access_info,
+                    request_deserializer=Distribute__pb2.file_request.FromString,
+                    response_serializer=Distribute__pb2.file_reply.SerializeToString,
+            ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
             'Distribute.File_Server', rpc_method_handlers)
@@ -430,6 +528,23 @@ def add_File_ServerServicer_to_server(servicer, server):
  # This class is part of an EXPERIMENTAL API.
 class File_Server(object):
     """Missing associated documentation comment in .proto file."""
+
+    @staticmethod
+    def send_bare_info(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/Distribute.File_Server/send_bare_info',
+            Distribute__pb2.file_request.SerializeToString,
+            Distribute__pb2.file_reply.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
 
     @staticmethod
     def upload_file(request,
@@ -545,6 +660,23 @@ class File_Server(object):
             timeout=None,
             metadata=None):
         return grpc.experimental.unary_unary(request, target, '/Distribute.File_Server/update_all',
+            Distribute__pb2.file_request.SerializeToString,
+            Distribute__pb2.file_reply.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def send_access_info(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/Distribute.File_Server/send_access_info',
             Distribute__pb2.file_request.SerializeToString,
             Distribute__pb2.file_reply.FromString,
             options, channel_credentials,

@@ -41,6 +41,7 @@ class Direct_Server(Distribute_pb2_grpc.Direct_ServerServicer):
     GET_SLAVE_ACCESS_STATUS_HEADER = "GET_SLAVE_ACCESS_STATUS\n\n"
     STRATEGY_ = "Load Balancing and Traffic Management"
     RECV_SLAVE_ACCESS_STATUS_REGEX = "SLAVE_ACCESS_STATUS: [a-zA-Z0-9_./]*\n\n"
+    SEND_SLAVE_ACCESS_STATUS_HEADER = "HOST: %s\tPORT: %s\tSLAVE_ACCESS_STATUS: %d\n"
 
     def __init__(self):
         # create tables不知道是什么
@@ -60,6 +61,17 @@ class Direct_Server(Distribute_pb2_grpc.Direct_ServerServicer):
 
         self.client2slaves_access_info = OrderedDict()
         self.slave_access_info = {}
+        self.temp_filename_request_dict = {}
+
+    def my_send_request(self, send_str, host, port):        
+        if type(port) == str:
+            port = int(port)
+        with grpc.insecure_channel("{0}:{1}".format(host, port)) as channel:
+            dir_cil=Distribute_pb2_grpc.Direct_ServerStub(channel=channel)
+            dir_cil.send_bare_info(Distribute_pb2.dir_request(message=send_str))
+
+    def send_bare_info(self, request, context):
+        return Distribute_pb2.dir_reply(result=request.message)
 
     # 功能函数定义
     def get_server(self, request, context):
@@ -87,7 +99,6 @@ class Direct_Server(Distribute_pb2_grpc.Direct_ServerServicer):
             # Get the list of slaves that have a copy of the file
             slave_string = self.get_slave_string(host, port)
             return_string = self.GET_RESPONSE % (host, port, filename, slave_string)
-            # print(return_string)
         else:
             # process end of the first part in this handler loop 
             # because the server haven't recv the client's optimal info
@@ -97,23 +108,21 @@ class Direct_Server(Distribute_pb2_grpc.Direct_ServerServicer):
         # Get the list of slaves that have a copy of the file
         slave_string = self.get_slave_string(host, port)
         return_string = self.GET_RESPONSE % (host, port, filename, slave_string)
-        # print(return_string)
-        #con.sendall(return_string)  # 修改成返回
         return Distribute_pb2.dir_reply(result=return_string)
     
-    def get_server_part2(self, con, addr, text):
-        request = text.splitlines()
-        client_host = request[0].split(' ')[1]
-        client_port = request[1].split(' ')[1]
-        optimal_slave_host = request[2].split(' ')[1]
-        optimal_slave_port = request[3].split(' ')[1]
+    def get_server_part2(self, request, context):
+        _request = request.message.splitlines()
+        client_host = _request[0].split(' ')[1]
+        client_port = _request[1].split(' ')[1]
+        optimal_slave_host = _request[2].split(' ')[1]
+        optimal_slave_port = _request[3].split(' ')[1]
         # process all requested files from optimal slave to client
         for fi in self.temp_filename_request_dict[(client_host, client_port)]:
             slave_string = self.get_slave_string(optimal_slave_host, optimal_slave_port)
             return_string = self.GET_RESPONSE % (optimal_slave_host, optimal_slave_port, fi, slave_string)
-            con.sendall(return_string)
+            # con.sendall(return_string)
         self.temp_filename_request_dict[(client_host, client_port)] = []
-        return
+        return Distribute_pb2.dir_reply(result=return_string)
 
     def send_slave_access_info2client(self, client_host, client_port):
         # send all slave info to the client
@@ -122,8 +131,15 @@ class Direct_Server(Distribute_pb2_grpc.Direct_ServerServicer):
             access_info = self.slave_access_info[(slave_host, slave_port)]
             tmp_str += self.SEND_SLAVE_ACCESS_STATUS_HEADER % (slave_host, slave_port, access_info)
         return_str = self.SEND_SLAVE_ACCESS_STATUS_HEADER_TO_CLIENT % tmp_str
-        self.send_request(return_str, client_host, int(client_port))
-        return
+        self.my_send_request(return_str, client_host, client_port)
+        # with grpc.insecure_channel("{0}:{1}".format(client_host, client_port)) as channel:
+        #     dir_cil=Distribute_pb2_grpc.Direct_ServerStub(channel=channel)
+        #     dir_cil.send_bare_info(Distribute_pb2.dir_request(message=return_str))
+            # ?
+        """
+        ????????????
+        """
+        return 
 
     def get_slaves(self, request, context):
         # Function that operate the host to send the list of slave servers
@@ -176,51 +192,10 @@ class Direct_Server(Distribute_pb2_grpc.Direct_ServerServicer):
         for (host, port) in self.slave_nodes:
             if self.chosen_slave == (host, port):
                 continue
-            self.send_request(send_string, host, int(port))
-    #暂时不动
-    def slave_fileserver_access_update(self, request, context):
-        _request = request.message.splitlines()
-        host = _request[0].split()[1]
-        port = _request[1].split()[1]
-        access_freq = int(_request[2].split()[1])
-        self.slave_access_info[(host, port)] = access_freq
-    #底层函数定义
-    # 1st: num hoops
-    def slave_fileserver_distribute(self, all_slave_hosts, client_host, client_port, strategy = 'random'):
-        if strategy == 'random':
-            chosen_host, chosen_port = random.choice(all_slave_hosts)[0]
-        elif strategy == 'Load Balancing':
-            pass
-        elif strategy == 'Load Balancing and Traffic Management':
-            pass
-        return chosen_host, chosen_port#？
-
-    def slave_fileserver_distribute_prepare(self, all_slave_hosts, client_host, client_port):
-        # 流量管理算法/负载均衡算法
-        # 获得所有slaves与client的ping延时？
-
-        res_arr = []
-        # remain = len(all_slave_hosts)
-        for slave_host in all_slave_hosts:
-            host, port = slave_host
-            return_str = os.popen('tracert {}'.format(host)).read().splitlines()[4:-2]
-            num_hoops = len(return_str)
-
-            return_str = os.popen('ping {}'.format(host)).read()
-            arr = return_str.splitlines()[-1].split('，')
-            min_time = arr[0].split('=')[1][1:-2]
-            max_time = arr[1].split('=')[1][1:-2]
-            avg_time = arr[2].split('=')[1][1:-2]
-
-            if (host, port) not in self.slave_access_info:
-                self.send_request(self.GET_SLAVE_ACCESS_STATUS_HEADER, host, int(port))
-                access_info = None
-            else:
-                access_info = self.slave_access_info[(host, port)]
-                # remain -= 1
-
-            res_arr.append((num_hoops, [min_time, max_time, avg_time], access_info))
-        self.client2slaves_access_info[(client_host, client_port)] = res_arr
+            self.my_send_request(send_string, host, port)
+            # with grpc.insecure_channel("{0}:{1}".format(host, port)) as channel:
+            #     dir_cil=Distribute_pb2_grpc.Direct_ServerStub(channel=channel)
+            #     dir_cil.paxos_send_alldata_to_all_slaves(Distribute_pb2.dir_request(message=send_string))
 
     def paxos_proposer_send(self, purpose='send prepare'):
         """
@@ -238,7 +213,7 @@ class Direct_Server(Distribute_pb2_grpc.Direct_ServerServicer):
         if purpose == 'send prepare':
             send_string = self.PROPOSER_PREPARE_HEADER % proposer_timestamp
             for (host, port) in self.slave_nodes:
-                self.send_request(send_string, host, int(port))
+                self.my_send_request(send_string, host, port)
             return True
         elif purpose == 'check PoK':
             assert self.paxos_cur_stage == 2, 'Invalid PAXOS stage! End of current PAXOS Check'
@@ -248,7 +223,7 @@ class Direct_Server(Distribute_pb2_grpc.Direct_ServerServicer):
                     if v > max_timestamp:
                         max_timestamp = v
                         self.chosen_slave = k
-                self.send_request(self.GETALL_DATA_FROM_A_SLAVE, k[0], int(k[1]))
+                self.my_send_request(self.GETALL_DATA_FROM_A_SLAVE,  k[0], k[1])
                 return True
                 # wait for the acceptV and repeat to all slaves
             else:
@@ -300,7 +275,8 @@ class Direct_Server(Distribute_pb2_grpc.Direct_ServerServicer):
         if purpose == 'send prepare':
             send_string = self.PROPOSER_PREPARE_HEADER % proposer_timestamp
             for (host, port) in self.slave_nodes:
-                self.send_request(send_string, host, int(port))
+                self.my_send_request(send_string, host, port)
+
             return True
         elif purpose == 'check PoK':
             assert self.paxos_cur_stage == 2, 'Invalid PAXOS stage! End of current PAXOS Check'
@@ -310,7 +286,8 @@ class Direct_Server(Distribute_pb2_grpc.Direct_ServerServicer):
                     if v > max_timestamp:
                         max_timestamp = v
                         self.chosen_slave = k
-                self.send_request(self.GETALL_DATA_FROM_A_SLAVE, k[0], int(k[1]))
+                self.my_send_request(self.GETALL_DATA_FROM_A_SLAVE, k[0], k[1])
+
                 return True
                 # wait for the acceptV and repeat to all slaves
             else:
@@ -343,7 +320,7 @@ class Direct_Server(Distribute_pb2_grpc.Direct_ServerServicer):
         for (host, port) in self.slave_nodes:
             if self.chosen_slave == (host, port):
                 continue
-            self.send_request(send_string, host, int(port))
+            self.my_send_request(send_string, host, port)
 
     def paxos_repeative_calling(self, purpose = 'send prepare'):
         stage_res = False
@@ -380,6 +357,53 @@ class Direct_Server(Distribute_pb2_grpc.Direct_ServerServicer):
 
             if self.aok_sum[0] == self.num_slaves:
                 self.paxos_repeative_calling('check AoK')
+
+
+    #暂时不动
+    def slave_fileserver_access_update(self, request, context):
+        _request = request.message.splitlines()
+        host = _request[0].split()[1]
+        port = _request[1].split()[1]
+        access_freq = int(_request[2].split()[1])
+        self.slave_access_info[(host, port)] = access_freq
+        
+    #底层函数定义
+    # 1st: num hoops
+    def slave_fileserver_distribute(self, all_slave_hosts, client_host, client_port, strategy = 'random'):
+        if strategy == 'random':
+            chosen_host, chosen_port = random.choice(all_slave_hosts)[0]
+        elif strategy == 'Load Balancing and Traffic Management':
+            chosen_host, chosen_port = self.send_slave_access_info2client(client_host, client_port)
+
+        return chosen_host, chosen_port#？
+
+    def slave_fileserver_distribute_prepare(self, all_slave_hosts, client_host, client_port):
+        # 流量管理算法/负载均衡算法
+        # 获得所有slaves与client的ping延时？
+
+        res_arr = []
+        # remain = len(all_slave_hosts)
+        for slave_host in all_slave_hosts:
+            host, port = slave_host
+            return_str = os.popen('tracert {}'.format(host)).read().splitlines()[4:-2]
+            num_hoops = len(return_str)
+
+            return_str = os.popen('ping {}'.format(host)).read()
+            arr = return_str.splitlines()[-1].split('，')
+            min_time = arr[0].split('=')[1][1:-2]
+            max_time = arr[1].split('=')[1][1:-2]
+            avg_time = arr[2].split('=')[1][1:-2]
+
+            if (host, port) not in self.slave_access_info:
+                self.my_send_request(self.GET_SLAVE_ACCESS_STATUS_HEADER, host, port)
+                access_info = None
+            else:
+                access_info = self.slave_access_info[(host, port)]
+                # remain -= 1
+
+            res_arr.append((num_hoops, [min_time, max_time, avg_time], access_info))
+        self.client2slaves_access_info[(client_host, client_port)] = res_arr
+
 
     def find_host(self, path):
         # Function that takes a path and returns the server that contains that directories files
