@@ -43,8 +43,13 @@ class File_Server(Distribute_pb2_grpc.File_ServerServicer):
     access_stat_interval = 100000
 
 
-    def __init__(self):
+    def __init__(self, my_host, my_port):
+        self.HOST = my_host
+        self.PORT = my_port
+
         self.BUCKET_LOCATION = os.path.join(self.BUCKET_LOCATION, str(self.PORT))
+        if not os.path.exists(self.BUCKET_LOCATION):
+            os.makedirs(self.BUCKET_LOCATION)
         self.slave_accepted_timestamp = time.time()
         self.access_count = []
 
@@ -202,15 +207,20 @@ class File_Server(Distribute_pb2_grpc.File_ServerServicer):
 
 
 def main():
+    if len(sys.argv) > 1:
+        my_host, my_port = sys.argv[1], int(sys.argv[2])
+    else:
+        raise NotImplementedError("Please specify the host and port in the command line, begin from 8010!")
     # 多线程服务器
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
     # 实例化 计算len的类
-    servicer = File_Server()
+    servicer = File_Server(my_host, my_port)
     # 注册本地服务,方法ComputeServicer只有这个是变的
     Distribute_pb2_grpc.add_File_ServerServicer_to_server(servicer, server)
     # compute_pb2_grpc.add_ComputeServicer_to_server(servicer, server)
     # 监听端口
-    server.add_insecure_port('127.0.0.1:19999')
+    # server.add_insecure_port('127.0.0.1:19999')
+    server.add_insecure_port('{}:{}'.format(servicer.HOST, servicer.PORT))
     # 开始接收请求进行服务
     server.start()
     # 使用 ctrl+c 可以退出服务

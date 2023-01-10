@@ -19,6 +19,11 @@ class Lock_Server(Distribute_pb2_grpc.Lock_ServerServicer):
     DATABASE = "Database/lock.db"
     # 差个__init__
 
+    def __init__(self, my_host, my_port):
+        super(Lock_Server, self).__init__()
+        self.HOST = my_host
+        self.PORT = my_port
+
     def get_lock(self, request, context):
         _request = request.message.splitlines()
         full_path = _request[0].split()[1]  # 获取目标路径
@@ -113,14 +118,19 @@ class Lock_Server(Distribute_pb2_grpc.Lock_ServerServicer):
     '''
     
 def main():
+    if len(sys.argv) > 1:
+        my_host, my_port = sys.argv[1], int(sys.argv[2])
+    else:
+        my_host, my_port = "127.0.0.1", 8007
     # 多线程服务器
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
     # 实例化 计算len的类
-    servicer = Lock_Server()
+    servicer = Lock_Server(my_host, my_port)
     # 注册本地服务,方法ComputeServicer只有这个是变的
     Distribute_pb2_grpc.add_Lock_ServerServicer_to_server(servicer, server)
     # 监听端口
-    server.add_insecure_port('127.0.0.1:19999')
+    # server.add_insecure_port('127.0.0.1:19999')
+    server.add_insecure_port('{}:{}'.format(servicer.HOST, servicer.PORT))
     # 开始接收请求进行服务
     server.start()
     # 使用 ctrl+c 可以退出服务

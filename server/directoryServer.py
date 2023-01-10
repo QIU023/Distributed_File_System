@@ -43,10 +43,15 @@ class Direct_Server(Distribute_pb2_grpc.Direct_ServerServicer):
     RECV_SLAVE_ACCESS_STATUS_REGEX = "SLAVE_ACCESS_STATUS: [a-zA-Z0-9_./]*\n\n"
     SEND_SLAVE_ACCESS_STATUS_HEADER = "HOST: %s\tPORT: %s\tSLAVE_ACCESS_STATUS: %d\n"
 
-    def __init__(self):
+    def __init__(self, my_host=None, my_port=None):
         # create tables不知道是什么
         self.create_tables()
         self.slave_nodes = []
+
+        if my_host is not None:
+            self.DIR_HOST = my_host
+        if my_port is not None:
+            self.DIR_PORT = my_port
 
         self.paxos_slave_acceptN_dict = {(self.DIR_HOST, self.DIR_PORT): time.time()}
         self.num_slaves = 0
@@ -495,16 +500,21 @@ class Direct_Server(Distribute_pb2_grpc.Direct_ServerServicer):
             cur.execute("CREATE TABLE IF NOT EXISTS Directories(Id INTEGER PRIMARY KEY, Path TEXT, Server INTEGER, FOREIGN KEY(Server) REFERENCES Servers(Id))")
             cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS DIRS ON Directories(Path)")
 
+
 def main():
+    if len(sys.argv) > 1:
+        my_host, my_port = sys.argv[1], int(sys.argv[2])
+    else:
+        my_host, my_port = "127.0.0.1", 8008
     # 多线程服务器
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
     # 实例化 计算len的类
-    servicer = Direct_Server()
+    servicer = Direct_Server(my_host, my_port)
     # 注册本地服务,方法ComputeServicer只有这个是变的
     Distribute_pb2_grpc.add_Direct_ServerServicer_to_server(servicer, server)
     # compute_pb2_grpc.add_ComputeServicer_to_server(servicer, server)
     # 监听端口
-    server.add_insecure_port('127.0.0.1:19999')
+    server.add_insecure_port('{}:{}'.format(servicer.HOST, servicer.PORT))
     # 开始接收请求进行服务
     server.start()
     # 使用 ctrl+c 可以退出服务
