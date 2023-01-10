@@ -104,12 +104,11 @@ class File_Server(Distribute_pb2_grpc.File_ServerServicer):
             data_i = data_i.split('\t')
             self.execute_write('\n'.join(data_i))
         # 不知道要不要补返回信息
-        return
+        return Distribute_pb2_grpc.file_reply(result="")
 
     def send_access_info(self, request, context):
         self.modify_access_status()
         return_string = self.SEND_SLAVE_ACCESS_STATUS_HEADER % (self.HOST, self.PORT, len(self.access_count))
-        # self.send_request(return_string, self.DIR_HOST, self.DIR_PORT)
         return Distribute_pb2_grpc.file_reply(result=return_string) 
         # not sure if it's sent to directory server
 
@@ -163,7 +162,6 @@ class File_Server(Distribute_pb2_grpc.File_ServerServicer):
             dir_cil=Distribute_pb2_grpc.Direct_ServerStub(channel=channel)
             response=dir_cil.paxos_update_response_status(Distribute_pb2.dir_request(message=all_files_str))
         return Distribute_pb2_grpc.file_reply(result=all_files_str) 
-        # self.send_request(all_files_str, self.DIR_HOST, self.DIR_PORT)
 
     # 底层函数
     def execute_write(self, text):

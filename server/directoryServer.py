@@ -68,7 +68,7 @@ class Direct_Server(Distribute_pb2_grpc.Direct_ServerServicer):
             port = int(port)
         with grpc.insecure_channel("{0}:{1}".format(host, port)) as channel:
             dir_cil=Distribute_pb2_grpc.Direct_ServerStub(channel=channel)
-            dir_cil.send_bare_info(Distribute_pb2.dir_request(message=send_str))
+            return dir_cil.send_bare_info(Distribute_pb2.dir_request(message=send_str))
 
     def send_bare_info(self, request, context):
         return Distribute_pb2.dir_reply(result=request.message)
@@ -132,13 +132,6 @@ class Direct_Server(Distribute_pb2_grpc.Direct_ServerServicer):
             tmp_str += self.SEND_SLAVE_ACCESS_STATUS_HEADER % (slave_host, slave_port, access_info)
         return_str = self.SEND_SLAVE_ACCESS_STATUS_HEADER_TO_CLIENT % tmp_str
         self.my_send_request(return_str, client_host, client_port)
-        # with grpc.insecure_channel("{0}:{1}".format(client_host, client_port)) as channel:
-        #     dir_cil=Distribute_pb2_grpc.Direct_ServerStub(channel=channel)
-        #     dir_cil.send_bare_info(Distribute_pb2.dir_request(message=return_str))
-            # ?
-        """
-        ????????????
-        """
         return 
 
     def get_slaves(self, request, context):
@@ -148,8 +141,6 @@ class Direct_Server(Distribute_pb2_grpc.Direct_ServerServicer):
         port = _request[1].split()[1]
         slave_string = self.get_slave_string(host, port)
         return_string = self.SLAVE_RESPONSE_HEADER % slave_string
-        # print(return_string)
-        #con.sendall(return_string)
         slaves = return_string.splitlines()[1:-1]
         return_list = []
         for i in range(0, len(slaves), 2):
@@ -184,6 +175,8 @@ class Direct_Server(Distribute_pb2_grpc.Direct_ServerServicer):
 
             if self.aok_sum[0] == self.num_slaves:
                 self.paxos_repeative_calling('check AoK')
+        return Distribute_pb2.dir_reply(result="")
+        
     #暂时不动
     def paxos_send_alldata_to_all_slaves(self, request, context):
         _request = request.message.splitlines()
@@ -193,9 +186,7 @@ class Direct_Server(Distribute_pb2_grpc.Direct_ServerServicer):
             if self.chosen_slave == (host, port):
                 continue
             self.my_send_request(send_string, host, port)
-            # with grpc.insecure_channel("{0}:{1}".format(host, port)) as channel:
-            #     dir_cil=Distribute_pb2_grpc.Direct_ServerStub(channel=channel)
-            #     dir_cil.paxos_send_alldata_to_all_slaves(Distribute_pb2.dir_request(message=send_string))
+        return Distribute_pb2.dir_reply(result="")
 
     def paxos_proposer_send(self, purpose='send prepare'):
         """
@@ -313,7 +304,6 @@ class Direct_Server(Distribute_pb2_grpc.Direct_ServerServicer):
             return False
 
     def paxos_send_alldata_to_all_slaves(self, con, addr, text):
-
         request = text.splitlines()
         all_data = '\n\n'.join(request[2:])
         send_string = self.SENDALL_DATA_TO_ALL_SLAVES_HEADER % all_data
@@ -321,6 +311,7 @@ class Direct_Server(Distribute_pb2_grpc.Direct_ServerServicer):
             if self.chosen_slave == (host, port):
                 continue
             self.my_send_request(send_string, host, port)
+        return Distribute_pb2.dir_reply(result="")
 
     def paxos_repeative_calling(self, purpose = 'send prepare'):
         stage_res = False
