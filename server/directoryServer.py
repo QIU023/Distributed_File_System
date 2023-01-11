@@ -16,7 +16,7 @@ from collections import OrderedDict
 
 
 class Direct_Server(Distribute_pb2_grpc.Direct_ServerServicer):
-    # 返回信息常量定义
+    # 请求返回信息常量定义
     GET_RESPONSE = "PRIMARY_SERVER: %s\nPORT: %s\nFILENAME: %s%s\n\n"
     SLAVE_RESPONSE_HEADER = "SLAVES: %s\n\n"
     SLAVE_HEADER = "\nSLAVE_SERVER: %s\nPORT: %s"

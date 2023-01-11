@@ -14,7 +14,9 @@ import Distribute_pb2_grpc
 from LRU_cache import TwoQueue_Cache
 
 
+
 class Client:
+    #本主机号码和端口
     PORT = 8000
     HOST = "192.168.90.100"
 
@@ -36,6 +38,7 @@ class Client:
     LOCK_RESPONSE = "LOCK_RESPONSE: \nFILENAME: .*\nTIME: .*\n\n"
     FAIL_RESPONSE = "ERROR: .*\nMESSAGE: .*\n\n"
     UNLOCK_HEADER = "UNLOCK_FILE: %s\nUNLOCK_TYPE: %s\n\n"
+
     REQUEST = "%s"
     LENGTH = 4096
 
@@ -200,7 +203,7 @@ class Client:
         # 调用download
         with grpc.insecure_channel("{0}:{1}".format(self.HOST, self.PORT)) as channel:
             dir_cil = Distribute_pb2_grpc.File_ServerStub(channel=channel)
-            response = dir_cil.download_file(Distribute_pb2.dir_request(message=request))
+            response = dir_cil.download_file(Distribute_pb2.file_request(message=request))
         request_data = response
         data = request_data.split()[0]
 
@@ -267,11 +270,12 @@ class Client:
 
     # 创建文件（不完善）
     def create_file(self, filename):
-        """创建空文件并上传至Server或者让Server创建同名文件"""
+        """创建空文件并让Server创建同名文件"""
         if not self.Is_in(filename):
             full_path = '\\'.join(self.BUCKET_LOCATION)
             newfile = open(full_path, 'w')
             newfile.close()
+            #有个情况，都是一句filename来找的，如果
             '''
             request = self.__get_directory(filename)
             if re.match(self.SERVER_RESPONSE, request):
@@ -286,6 +290,10 @@ class Client:
             self.__upload_file(filename)
             return True
         return False
+
+    #删除文件
+    def delete_file(self,filename):
+        pass
 
     # 列出文件
     def list_files(self):
