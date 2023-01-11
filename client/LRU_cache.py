@@ -24,6 +24,9 @@ class TwoQueue_Cache:
             self.lru_queue[key]['access_time_stamp'] = time.time()
             return pop_name
 
+    def is_in_cache(self, key: str):
+        return key in self.lru_queue or key in self.fifo_queue
+
     def move_from_fifo2lru(self, key):
         pop_name = None
         self.lru_queue[key] = self.fifo_queue[key]

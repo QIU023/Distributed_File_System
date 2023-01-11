@@ -93,7 +93,7 @@ class Client:
         file_downloaded = False
         if filename not in self.open_files.keys():
             # 这里补充：不在缓存才去下载
-            if filename not in self.cache_info.keys():
+            if self.cache_info.is_in_cache(filename):
                 # Get the info of the server hosting the file,
                 # 涉及server分配策略！cdn负载均衡算法
                 request = self.__get_directory(filename)
