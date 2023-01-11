@@ -412,6 +412,16 @@ class File_ServerStub(object):
                 request_serializer=Distribute__pb2.file_request.SerializeToString,
                 response_deserializer=Distribute__pb2.file_reply.FromString,
                 )
+        self.create_file = channel.unary_unary(
+                '/Distribute.File_Server/create_file',
+                request_serializer=Distribute__pb2.file_request.SerializeToString,
+                response_deserializer=Distribute__pb2.file_reply.FromString,
+                )
+        self.delete_file = channel.unary_unary(
+                '/Distribute.File_Server/delete_file',
+                request_serializer=Distribute__pb2.file_request.SerializeToString,
+                response_deserializer=Distribute__pb2.file_reply.FromString,
+                )
 
 
 class File_ServerServicer(object):
@@ -471,6 +481,18 @@ class File_ServerServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def create_file(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def delete_file(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_File_ServerServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -516,6 +538,16 @@ def add_File_ServerServicer_to_server(servicer, server):
             ),
             'send_access_info': grpc.unary_unary_rpc_method_handler(
                     servicer.send_access_info,
+                    request_deserializer=Distribute__pb2.file_request.FromString,
+                    response_serializer=Distribute__pb2.file_reply.SerializeToString,
+            ),
+            'create_file': grpc.unary_unary_rpc_method_handler(
+                    servicer.create_file,
+                    request_deserializer=Distribute__pb2.file_request.FromString,
+                    response_serializer=Distribute__pb2.file_reply.SerializeToString,
+            ),
+            'delete_file': grpc.unary_unary_rpc_method_handler(
+                    servicer.delete_file,
                     request_deserializer=Distribute__pb2.file_request.FromString,
                     response_serializer=Distribute__pb2.file_reply.SerializeToString,
             ),
@@ -677,6 +709,40 @@ class File_Server(object):
             timeout=None,
             metadata=None):
         return grpc.experimental.unary_unary(request, target, '/Distribute.File_Server/send_access_info',
+            Distribute__pb2.file_request.SerializeToString,
+            Distribute__pb2.file_reply.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def create_file(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/Distribute.File_Server/create_file',
+            Distribute__pb2.file_request.SerializeToString,
+            Distribute__pb2.file_reply.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def delete_file(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/Distribute.File_Server/delete_file',
             Distribute__pb2.file_request.SerializeToString,
             Distribute__pb2.file_reply.FromString,
             options, channel_credentials,

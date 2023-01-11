@@ -41,10 +41,12 @@ service File_Server {
   rpc paxos_send_acceptV (file_request) returns (file_reply) {}
   rpc update_all (file_request) returns (file_reply) {}
   rpc send_access_info (file_request) returns (file_reply) {}
+  rpc create_file(file_request) returns (file_reply) {}
+  rpc delete_file(file_request) returns (file_reply) {}
 }
 message file_request{
   string message = 1;
 }
 message file_reply {
-    string result = 1;
+  string result = 1;
 }
