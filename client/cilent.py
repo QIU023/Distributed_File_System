@@ -14,7 +14,9 @@ import Distribute_pb2_grpc
 from LRU_cache import TwoQueue_Cache
 
 
-class Cilent:
+
+class Client:
+    #本主机号码和端口
     PORT = 8000
     HOST = "192.168.90.100"
 
@@ -36,6 +38,9 @@ class Cilent:
     LOCK_RESPONSE = "LOCK_RESPONSE: \nFILENAME: .*\nTIME: .*\n\n"
     FAIL_RESPONSE = "ERROR: .*\nMESSAGE: .*\n\n"
     UNLOCK_HEADER = "UNLOCK_FILE: %s\nUNLOCK_TYPE: %s\n\n"
+    CREATE_HEADER = "CREATE_FILE: %s\n\n"
+    DELETE_HEADER = "DELETE_FILE: %s\n\n"
+
     REQUEST = "%s"
     LENGTH = 4096
 
@@ -200,7 +205,7 @@ class Cilent:
         # 调用download
         with grpc.insecure_channel("{0}:{1}".format(self.HOST, self.PORT)) as channel:
             dir_cil = Distribute_pb2_grpc.File_ServerStub(channel=channel)
-            response = dir_cil.download_file(Distribute_pb2.dir_request(message=request))
+            response = dir_cil.download_file(Distribute_pb2.file_request(message=request))
         request_data = response
         data = request_data.split()[0]
 
@@ -261,29 +266,35 @@ class Cilent:
 
     # 判断文件名是否已经重名
     def Is_in(self, filename):
+        return False
         if not self.__get_directory(filename):
             return False
         return True
 
-    # 创建文件（不完善）
+    # 创建文件
     def create_file(self, filename):
-        """创建空文件并上传至Server或者让Server创建同名文件"""
+        """创建空文件并让Server创建同名文件"""
         if not self.Is_in(filename):
-            full_path = '\\'.join(self.BUCKET_LOCATION)
+            full_path = os.path.join(self.BUCKET_LOCATION,filename)
             newfile = open(full_path, 'w')
             newfile.close()
-            '''
-            request = self.__get_directory(filename)
-            if re.match(self.SERVER_RESPONSE, request):
-                # Remove lock from file
-                self.__unlock_file(filename)
-                params = request.splitlines()
-                server = params[0].split()[1]
-                open_file = params[2].split()[1]
-                # Upload the file and
-                file_uploaded = self.__upload_file(server, open_file)
-            '''
-            self.__upload_file(filename)
+            #有个情况，都是一句filename来找的，如果
+            request = self.CREATE_HEADER % (filename)
+            with grpc.insecure_channel("{0}:{1}".format(self.HOST, 8005)) as channel:
+                dir_cil = Distribute_pb2_grpc.Direct_ServerStub(channel=channel)
+                response = dir_cil.get_server(Distribute_pb2.dir_request(message=request))
+            return True
+        return False
+
+    #删除文件
+    def delete_file(self,filename):
+        if self.Is_in(filename):
+            full_path = os.path.join(self.BUCKET_LOCATION,filename)
+            os.remove(full_path)
+            request = self.DELETE_HEADER % (filename)
+            with grpc.insecure_channel("{0}:{1}".format(self.HOST, 8005)) as channel:
+                dir_cil = Distribute_pb2_grpc.Direct_ServerStub(channel=channel)
+                response = dir_cil.get_server(Distribute_pb2.dir_request(message=request))
             return True
         return False
 
@@ -294,23 +305,23 @@ class Cilent:
 
 # 需要写客户端main的
 def main():
-    cilent = Cilent();
+    client = Client()
     while True:
         choose = input("请输入需要服务的类型（数字）：1.获取客户端文件列表 2.read文件 3.write文件 \n 4.create文件  5.退出\n")
         choose = int(choose)
         if choose == 1:
-            print(cilent.list_files())
+            print(client.list_files())
         elif choose == 2:
             filename = input("请输入文件名：（确保服务器中有）")
-            data = cilent.read(filename)
+            data = client.read(filename)
             print(data)
         elif choose == 3:
             filename = input("请输入文件名：（确保服务器中有）")
             data = input("请输入写入文件的信息：")
-            cilent.write(filename, data)
+            client.write(filename, data)
         elif choose == 4:
             filename = input("请输入文件名：")
-            cilent.create_file(filename)
+            client.create_file(filename)
         else:
             break
 
