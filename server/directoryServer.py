@@ -16,12 +16,14 @@ from collections import OrderedDict
 
 
 class Direct_Server(Distribute_pb2_grpc.Direct_ServerServicer):
-    # 返回信息常量定义
+    # 请求返回信息常量定义
     GET_RESPONSE = "PRIMARY_SERVER: %s\nPORT: %s\nFILENAME: %s%s\n\n"
     SLAVE_RESPONSE_HEADER = "SLAVES: %s\n\n"
     SLAVE_HEADER = "\nSLAVE_SERVER: %s\nPORT: %s"
     GETALL_DATA_FROM_A_SLAVE = "SENDALL_DATA_TO_MASTER\n\n"
     SENDALL_DATA_TO_ALL_SLAVES_HEADER = "SENDALL_DATA_TO_ALL_SLAVES_HEADER\n\n%s"
+    CREATE_HEADER = "CREATE_FILE: %s\n\n"  #
+    DELETE_HEADER = "DELETE_FILE: %s\n\n"  #
 
     DATABASE = "Database/directories.db"
 
@@ -33,18 +35,26 @@ class Direct_Server(Distribute_pb2_grpc.Direct_ServerServicer):
     PAXOS_CHECK_REGEX = "PAXOS_CHECK\n\n"
     PROPOSER_PREPARE_HEADER = "PROPOSER_PREPARE_N: %s\n\n"
     PROPOSER_ACCEPT_HEADER = "PROPOSER_ACCEPT_N: %s\nPROPOSER_ACCEPT_V: %s\n\n"
-    ACCEPTOR_POK_REGEX = "HOST: [a-zA-Z0-9_.]*\n\PORT: [0-9_.]*\nACCEPTOR_POK: [a-zA-Z0-9_.]*\nACCEPTOR_ACCEPT_N: [0-9_.]*\n\nACCEPTOR_ACCEPT_V: .*\n\n"
+    ACCEPTOR_POK_REGEX = "HOST: [a-zA-Z0-9_.]*\nPORT: [0-9_.]*\nACCEPTOR_POK: [a-zA-Z0-9_.]*\nACCEPTOR_ACCEPT_N: [0-9_.]*\n\nACCEPTOR_ACCEPT_V: .*\n\n"
     ACCEPTOR_AOK_REGEX = "HOST: [a-zA-Z0-9_.]*\nPORT: [0-9_.]*\nACCEPTOR_AOK: [a-zA-Z0-9_.]*\n"
     SENDALL_DATA_REGEX = "ALL_DATA_TO_MASTER\nACCEPT_N: [0-9_.]\nALLDATA: [a-zA-Z0-9_.]*\n\n"
 
     # Load balance/Traffic Management Algorithm for slaves
     GET_SLAVE_ACCESS_STATUS_HEADER = "GET_SLAVE_ACCESS_STATUS\n\n"
+    STRATEGY_ = "Load Balancing and Traffic Management"
     RECV_SLAVE_ACCESS_STATUS_REGEX = "SLAVE_ACCESS_STATUS: [a-zA-Z0-9_./]*\n\n"
+    SEND_SLAVE_ACCESS_STATUS_HEADER = "HOST: %s\tPORT: %s\tSLAVE_ACCESS_STATUS: %d\n"
+    access_stat_interval = 100000
 
-    def __init__(self):
+    def __init__(self, my_host=None, my_port=None):
         # create tables不知道是什么
         self.create_tables()
         self.slave_nodes = []
+
+        if my_host is not None:
+            self.DIR_HOST = my_host
+        if my_port is not None:
+            self.DIR_PORT = my_port
 
         self.paxos_slave_acceptN_dict = {(self.DIR_HOST, self.DIR_PORT): time.time()}
         self.num_slaves = 0
@@ -59,34 +69,103 @@ class Direct_Server(Distribute_pb2_grpc.Direct_ServerServicer):
 
         self.client2slaves_access_info = OrderedDict()
         self.slave_access_info = {}
+        self.temp_filename_request_dict = {}
+
+    def my_send_request(self, send_str, host, port):
+        if type(port) == str:
+            port = int(port)
+        with grpc.insecure_channel("{0}:{1}".format(host, port)) as channel:
+            dir_cil = Distribute_pb2_grpc.Direct_ServerStub(channel=channel)
+            return dir_cil.send_bare_info(Distribute_pb2.dir_request(message=send_str))
+
+    def send_bare_info(self, request, context):
+        return Distribute_pb2.dir_reply(result=request.message)
 
     # 功能函数定义
     def get_server(self, request, context):
+        # 暂时先加在这里
+        # 调用slaves之后存在self.slave_nodes和slef.num_slaves中
+        if re.match(self.CREATE_HEADER, request.message):
+            with grpc.insecure_channel("{0}:{1}".format(self.DIR_HOST, self.DIR_PORT)) as channel:
+                dir_cil = Distribute_pb2_grpc.Direct_ServerStub(channel=channel)
+                dir_cil.get_slaves(Distribute_pb2.dir_request(message=request))
+            for i in range(0, self.num_slaves):
+                host = self.slave_nodes[i][0]
+                port = self.slave_nodes[i][1]
+                with grpc.insecure_channel("{0}:{1}".format(host, port)) as channel:
+                    file_cil = Distribute_pb2_grpc.File_ServerStub(channel=channel)
+                    file_cil.create_file(Distribute_pb2.file_request(message=request))
+        elif re.match(self.DELETE_HEADER, request.message):
+            with grpc.insecure_channel("{0}:{1}".format(self.DIR_HOST, self.DIR_PORT)) as channel:
+                dir_cil = Distribute_pb2_grpc.Direct_ServerStub(channel=channel)
+                dir_cil.get_slaves(Distribute_pb2.dir_request(message=request))
+            for i in range(0, self.num_slaves):
+                host = self.slave_nodes[i][0]
+                port = self.slave_nodes[i][1]
+                with grpc.insecure_channel("{0}:{1}".format(host, port)) as channel:
+                    file_cil = Distribute_pb2_grpc.File_ServerStub(channel=channel)
+                    file_cil.create_file(Distribute_pb2.file_request(message=request))
+        # 要先匹配，如果说是CREATE和delete的话功能不同
         # Handler for file upload requests
-        _request = request.message.splitlines()
-        client_host = _request[1]
-        client_port = int(_request[2])
-        full_path = _request[3].split()[1]
+        else:
+            _request = request.message.splitlines()
+            client_host = _request[1]
+            client_port = int(_request[2])
+            full_path = _request[3].split()[1]
 
-        path, file = os.path.split(full_path)
-        name, ext = os.path.splitext(file)
-        filename = hashlib.sha256(full_path).hexdigest() + ext
-        all_slave_hosts = self.find_host(path)
-        host, port = self.slave_fileserver_distribute(all_slave_hosts, client_host, client_port, strategy='random')
-
-        if not host:
-            # The Directory doesn't exist and must be added to the db
-            server_id = self.pick_random_host()
-            self.create_dir(path, server_id)
+            path, file = os.path.split(full_path)
+            name, ext = os.path.splitext(file)
+            filename = hashlib.sha256(full_path).hexdigest() + ext
             all_slave_hosts = self.find_host(path)
-            host, port = self.slave_fileserver_distribute(all_slave_hosts, client_host, client_port, strategy='random')
+            host, port = self.slave_fileserver_distribute(all_slave_hosts,
+                                                          client_host, client_port, strategy=self.STRATEGY_)
 
-        # Get the list of slaves that have a copy of the file
-        slave_string = self.get_slave_string(host, port)
-        return_string = self.GET_RESPONSE % (host, port, filename, slave_string)
-        # print(return_string)
-        #con.sendall(return_string)  # 修改成返回
+            if self.STRATEGY_ != "Load Balancing and Traffic Management":
+                if not host:
+                    # The Directory doesn't exist and must be added to the db
+                    server_id = self.pick_random_host()
+                    self.create_dir(path, server_id)
+                    all_slave_hosts = self.find_host(path)
+                    host, port = self.slave_fileserver_distribute(all_slave_hosts, client_host, client_port,
+                                                                  strategy='random')
+
+                # Get the list of slaves that have a copy of the file
+                slave_string = self.get_slave_string(host, port)
+                return_string = self.GET_RESPONSE % (host, port, filename, slave_string)
+            else:
+                # process end of the first part in this handler loop
+                # because the server haven't recv the client's optimal info
+                self.temp_filename_request_dict[(client_host, client_port)].append(filename)
+                # can be multiple files requested because slave access info/determined info can be lost/jammed in Network
+
+            # Get the list of slaves that have a copy of the file
+            slave_string = self.get_slave_string(host, port)
+            return_string = self.GET_RESPONSE % (host, port, filename, slave_string)
+            return Distribute_pb2.dir_reply(result=return_string)
+
+    def get_server_part2(self, request, context):
+        _request = request.message.splitlines()
+        client_host = _request[0].split(' ')[1]
+        client_port = _request[1].split(' ')[1]
+        optimal_slave_host = _request[2].split(' ')[1]
+        optimal_slave_port = _request[3].split(' ')[1]
+        # process all requested files from optimal slave to client
+        for fi in self.temp_filename_request_dict[(client_host, client_port)]:
+            slave_string = self.get_slave_string(optimal_slave_host, optimal_slave_port)
+            return_string = self.GET_RESPONSE % (optimal_slave_host, optimal_slave_port, fi, slave_string)
+            # con.sendall(return_string)
+        self.temp_filename_request_dict[(client_host, client_port)] = []
         return Distribute_pb2.dir_reply(result=return_string)
+
+    def send_slave_access_info2client(self, client_host, client_port):
+        # send all slave info to the client
+        tmp_str = ""
+        for slave_host, slave_port in self.slave_nodes:
+            access_info = self.slave_access_info[(slave_host, slave_port)]
+            tmp_str += self.SEND_SLAVE_ACCESS_STATUS_HEADER % (slave_host, slave_port, access_info)
+        return_str = self.SEND_SLAVE_ACCESS_STATUS_HEADER_TO_CLIENT % tmp_str
+        self.my_send_request(return_str, client_host, client_port)
+        return
 
     def get_slaves(self, request, context):
         # Function that operate the host to send the list of slave servers
@@ -95,8 +174,6 @@ class Direct_Server(Distribute_pb2_grpc.Direct_ServerServicer):
         port = _request[1].split()[1]
         slave_string = self.get_slave_string(host, port)
         return_string = self.SLAVE_RESPONSE_HEADER % slave_string
-        # print(return_string)
-        #con.sendall(return_string)
         slaves = return_string.splitlines()[1:-1]
         return_list = []
         for i in range(0, len(slaves), 2):
@@ -131,7 +208,9 @@ class Direct_Server(Distribute_pb2_grpc.Direct_ServerServicer):
 
             if self.aok_sum[0] == self.num_slaves:
                 self.paxos_repeative_calling('check AoK')
-    #暂时不动
+        return Distribute_pb2.dir_reply(result="")
+
+    # 暂时不动
     def paxos_send_alldata_to_all_slaves(self, request, context):
         _request = request.message.splitlines()
         all_data = '\n\n'.join(_request[2:])
@@ -139,51 +218,8 @@ class Direct_Server(Distribute_pb2_grpc.Direct_ServerServicer):
         for (host, port) in self.slave_nodes:
             if self.chosen_slave == (host, port):
                 continue
-            self.send_request(send_string, host, int(port))
-    #暂时不动
-    def slave_fileserver_access_update(self, request, context):
-        _request = request.message.splitlines()
-        host = _request[0].split()[1]
-        port = _request[1].split()[1]
-        access_freq = int(_request[2].split()[1])
-        self.slave_access_info[(host, port)] = access_freq
-    #底层函数定义
-    # 1st: num hoops
-    def slave_fileserver_distribute(self, all_slave_hosts, client_host, client_port, strategy = 'random'):
-        if strategy == 'random':
-            chosen_host, chosen_port = random.choice(all_slave_hosts)[0]
-        elif strategy == 'Load Balancing':
-            pass
-        elif strategy == 'Load Balancing and Traffic Management':
-            pass
-        return chosen_host, chosen_port#？
-
-    def slave_fileserver_distribute_prepare(self, all_slave_hosts, client_host, client_port):
-        # 流量管理算法/负载均衡算法
-        # 获得所有slaves与client的ping延时？
-
-        res_arr = []
-        # remain = len(all_slave_hosts)
-        for slave_host in all_slave_hosts:
-            host, port = slave_host
-            return_str = os.popen('tracert {}'.format(host)).read().splitlines()[4:-2]
-            num_hoops = len(return_str)
-
-            return_str = os.popen('ping {}'.format(host)).read()
-            arr = return_str.splitlines()[-1].split('，')
-            min_time = arr[0].split('=')[1][1:-2]
-            max_time = arr[1].split('=')[1][1:-2]
-            avg_time = arr[2].split('=')[1][1:-2]
-
-            if (host, port) not in self.slave_access_info:
-                self.send_request(self.GET_SLAVE_ACCESS_STATUS_HEADER, host, int(port))
-                access_info = None
-            else:
-                access_info = self.slave_access_info[(host, port)]
-                # remain -= 1
-
-            res_arr.append((num_hoops, [min_time, max_time, avg_time], access_info))
-        self.client2slaves_access_info[(client_host, client_port)] = res_arr
+            self.my_send_request(send_string, host, port)
+        return Distribute_pb2.dir_reply(result="")
 
     def paxos_proposer_send(self, purpose='send prepare'):
         """
@@ -201,7 +237,7 @@ class Direct_Server(Distribute_pb2_grpc.Direct_ServerServicer):
         if purpose == 'send prepare':
             send_string = self.PROPOSER_PREPARE_HEADER % proposer_timestamp
             for (host, port) in self.slave_nodes:
-                self.send_request(send_string, host, int(port))
+                self.my_send_request(send_string, host, port)
             return True
         elif purpose == 'check PoK':
             assert self.paxos_cur_stage == 2, 'Invalid PAXOS stage! End of current PAXOS Check'
@@ -211,7 +247,7 @@ class Direct_Server(Distribute_pb2_grpc.Direct_ServerServicer):
                     if v > max_timestamp:
                         max_timestamp = v
                         self.chosen_slave = k
-                self.send_request(self.GETALL_DATA_FROM_A_SLAVE, k[0], int(k[1]))
+                self.my_send_request(self.GETALL_DATA_FROM_A_SLAVE, k[0], k[1])
                 return True
                 # wait for the acceptV and repeat to all slaves
             else:
@@ -236,7 +272,7 @@ class Direct_Server(Distribute_pb2_grpc.Direct_ServerServicer):
             self.paxos_cur_stage = 0
             return False
 
-    def paxos_repeative_calling(self, purpose = 'send prepare'):
+    def paxos_repeative_calling(self, purpose='send prepare'):
         stage_res = False
         self.paxos_cur_stage = 1
         while not stage_res and self.paxos_trying_times < self.paxos_trying_times_limit:
@@ -246,6 +282,51 @@ class Direct_Server(Distribute_pb2_grpc.Direct_ServerServicer):
                 self.paxos_trying_times += 1
         if not stage_res:
             print("PAXOS Consistency Check Failed!!!")
+
+    # 暂时不动
+    def slave_fileserver_access_update(self, request, context):
+        _request = request.message.splitlines()
+        host = _request[0].split()[1]
+        port = _request[1].split()[1]
+        access_freq = int(_request[2].split()[1])
+        self.slave_access_info[(host, port)] = access_freq
+
+    # 底层函数定义
+    # 1st: num hoops
+    def slave_fileserver_distribute(self, all_slave_hosts, client_host, client_port, strategy='random'):
+        if strategy == 'random':
+            chosen_host, chosen_port = random.choice(all_slave_hosts)[0]
+        elif strategy == 'Load Balancing and Traffic Management':
+            chosen_host, chosen_port = self.send_slave_access_info2client(client_host, client_port)
+
+        return chosen_host, chosen_port  # ？
+
+    def slave_fileserver_distribute_prepare(self, all_slave_hosts, client_host, client_port):
+        # 流量管理算法/负载均衡算法
+        # 获得所有slaves与client的ping延时？
+
+        res_arr = []
+        # remain = len(all_slave_hosts)
+        for slave_host in all_slave_hosts:
+            host, port = slave_host
+            return_str = os.popen('tracert {}'.format(host)).read().splitlines()[4:-2]
+            num_hoops = len(return_str)
+
+            return_str = os.popen('ping {}'.format(host)).read()
+            arr = return_str.splitlines()[-1].split('，')
+            min_time = arr[0].split('=')[1][1:-2]
+            max_time = arr[1].split('=')[1][1:-2]
+            avg_time = arr[2].split('=')[1][1:-2]
+
+            if (host, port) not in self.slave_access_info:
+                self.my_send_request(self.GET_SLAVE_ACCESS_STATUS_HEADER, host, port)
+                access_info = None
+            else:
+                access_info = self.slave_access_info[(host, port)]
+                # remain -= 1
+
+            res_arr.append((num_hoops, [min_time, max_time, avg_time], access_info))
+        self.client2slaves_access_info[(client_host, client_port)] = res_arr
 
     def find_host(self, path):
         # Function that takes a path and returns the server that contains that directories files
@@ -262,6 +343,18 @@ class Direct_Server(Distribute_pb2_grpc.Direct_ServerServicer):
                 return_host_list = cur.fetchall()
         return return_host_list
 
+    def pick_random_host(self):
+        # Function to pick a random host from the database
+        return_host = False
+        con = db.connect(self.DATABASE)
+        with con:
+            cur = con.cursor()
+            cur.execute("SELECT Id FROM Servers")
+            servers = cur.fetchall()
+            if servers:
+                return_host = random.choice(servers)[0]
+        return return_host
+
     def get_slave_string(self, host, port):
         # Function that generates a slave string
         return_string = ""
@@ -275,18 +368,6 @@ class Direct_Server(Distribute_pb2_grpc.Direct_ServerServicer):
             header = self.SLAVE_HEADER % (host, port)
             return_string = return_string + header
         return return_string
-
-    def pick_random_host(self):
-        # Function to pick a random host from the database
-        return_host = False
-        con = db.connect(self.DATABASE)
-        with con:
-            cur = con.cursor()
-            cur.execute("SELECT Id FROM Servers")
-            servers = cur.fetchall()
-            if servers:
-                return_host = random.choice(servers)[0]
-        return return_host
 
     def create_dir(self, path, host):
         # Function to create a directory in the DB
@@ -331,19 +412,29 @@ class Direct_Server(Distribute_pb2_grpc.Direct_ServerServicer):
             cur = con.cursor()
             cur.execute("CREATE TABLE IF NOT EXISTS Servers(Id INTEGER PRIMARY KEY, Server TEXT, Port TEXT)")
             cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS SERVS ON Servers(Server, Port)")
-            cur.execute("CREATE TABLE IF NOT EXISTS Directories(Id INTEGER PRIMARY KEY, Path TEXT, Server INTEGER, FOREIGN KEY(Server) REFERENCES Servers(Id))")
+            cur.execute(
+                "CREATE TABLE IF NOT EXISTS Directories(Id INTEGER PRIMARY KEY, Path TEXT, Server INTEGER, FOREIGN KEY(Server) REFERENCES Servers(Id))")
             cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS DIRS ON Directories(Path)")
 
+
 def main():
+    my_host, my_port = "192.168.90.100", 8005
+    '''
+    if len(sys.argv) > 1:
+        my_host, my_port = "192.168.90.100", 8005
+        #my_host, my_port = sys.argv[1], int(sys.argv[2])
+    else:
+        my_host, my_port = "192.168.90.100", 8008
+    '''
     # 多线程服务器
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
     # 实例化 计算len的类
-    servicer = Direct_Server()
+    servicer = Direct_Server(my_host, my_port)
     # 注册本地服务,方法ComputeServicer只有这个是变的
     Distribute_pb2_grpc.add_Direct_ServerServicer_to_server(servicer, server)
     # compute_pb2_grpc.add_ComputeServicer_to_server(servicer, server)
     # 监听端口
-    server.add_insecure_port('127.0.0.1:19999')
+    server.add_insecure_port('{}:{}'.format(servicer.DIR_HOST, servicer.DIR_PORT))
     # 开始接收请求进行服务
     server.start()
     # 使用 ctrl+c 可以退出服务
