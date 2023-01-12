@@ -38,6 +38,8 @@ class Client:
     LOCK_RESPONSE = "LOCK_RESPONSE: \nFILENAME: .*\nTIME: .*\n\n"
     FAIL_RESPONSE = "ERROR: .*\nMESSAGE: .*\n\n"
     UNLOCK_HEADER = "UNLOCK_FILE: %s\nUNLOCK_TYPE: %s\n\n"
+    CREATE_HEADER = "CREATE_FILE: %s\n\n"
+    DELETE_HEADER = "DELETE_FILE: %s\n\n"
 
     REQUEST = "%s"
     LENGTH = 4096
@@ -264,36 +266,37 @@ class Client:
 
     # 判断文件名是否已经重名
     def Is_in(self, filename):
+        return False
         if not self.__get_directory(filename):
             return False
         return True
 
-    # 创建文件（不完善）
+    # 创建文件
     def create_file(self, filename):
         """创建空文件并让Server创建同名文件"""
         if not self.Is_in(filename):
-            full_path = '\\'.join(self.BUCKET_LOCATION)
+            full_path = os.path.join(self.BUCKET_LOCATION,filename)
             newfile = open(full_path, 'w')
             newfile.close()
             #有个情况，都是一句filename来找的，如果
-            '''
-            request = self.__get_directory(filename)
-            if re.match(self.SERVER_RESPONSE, request):
-                # Remove lock from file
-                self.__unlock_file(filename)
-                params = request.splitlines()
-                server = params[0].split()[1]
-                open_file = params[2].split()[1]
-                # Upload the file and
-                file_uploaded = self.__upload_file(server, open_file)
-            '''
-            self.__upload_file(filename)
+            request = self.CREATE_HEADER % (filename)
+            with grpc.insecure_channel("{0}:{1}".format(self.HOST, 8005)) as channel:
+                dir_cil = Distribute_pb2_grpc.Direct_ServerStub(channel=channel)
+                response = dir_cil.get_server(Distribute_pb2.dir_request(message=request))
             return True
         return False
 
     #删除文件
     def delete_file(self,filename):
-        pass
+        if self.Is_in(filename):
+            full_path = os.path.join(self.BUCKET_LOCATION,filename)
+            os.remove(full_path)
+            request = self.DELETE_HEADER % (filename)
+            with grpc.insecure_channel("{0}:{1}".format(self.HOST, 8005)) as channel:
+                dir_cil = Distribute_pb2_grpc.Direct_ServerStub(channel=channel)
+                response = dir_cil.get_server(Distribute_pb2.dir_request(message=request))
+            return True
+        return False
 
     # 列出文件
     def list_files(self):
