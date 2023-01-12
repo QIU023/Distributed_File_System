@@ -1,5 +1,5 @@
 # -*-coding:utf-8-*-
-# 编辑者：XuZH
+# 编辑者:XuZH
 import grpc
 import Distribute_pb2
 import Distribute_pb2_grpc
@@ -17,7 +17,13 @@ class Lock_Server(Distribute_pb2_grpc.Lock_ServerServicer):
     LOCK_RESPONSE = "LOCK_RESPONSE: \nLOCK_TYPE: \nFILENAME: %s\nTIME: %d\n\n"
     FAIL_RESPONSE = "ERROR: %d\nMESSAGE: %s\n\n"
     DATABASE = "Database/lock.db"
+
     # 差个__init__
+
+    def __init__(self, my_host, my_port):
+        super(Lock_Server, self).__init__()
+        self.HOST = my_host
+        self.PORT = my_port
 
     def get_lock(self, request, context):
         _request = request.message.splitlines()
@@ -52,12 +58,10 @@ class Lock_Server(Distribute_pb2_grpc.Lock_ServerServicer):
         elif lock_type == 'write':
             con.isolation_level = 'EXCLUSIVE'
             con.execute('BEGIN EXCLUSIVE')
-
         else:
             con.close()
             return False
             # print('lock_type Error!')
-
         current_time = int(time.time())
         end_time = current_time + lock_period
         # '''
@@ -96,7 +100,7 @@ class Lock_Server(Distribute_pb2_grpc.Lock_ServerServicer):
         cur = con.cursor()
         cur.execute("SELECT count(*) FROM Locks WHERE Path = ? AND Time > ?", (path, current_time))
         count = cur.fetchone()[0]
-        #曾经是is
+        # 曾经是is
         if count == 0:
             cur.execute("UPDATE Locks SET Time=? WHERE Path = ? AND Time > ?", (current_time, path, current_time))
         # End r/w access to the db
@@ -104,16 +108,32 @@ class Lock_Server(Distribute_pb2_grpc.Lock_ServerServicer):
         con.close()
         return current_time
 
+    '''
+    def create_table(cls):
+        # Function that creates the tables for the locking servers database
+        con = db.connect(cls.DATABASE)
+        with con:
+            cur = con.cursor()
+            cur.execute("CREATE TABLE IF NOT EXISTS Locks(Id INTEGER PRIMARY KEY, Path TEXT, Time INT)")
+            cur.execute("CREATE INDEX IF NOT EXISTS PATHS ON Locks(Path)")
+    '''
+
 
 def main():
+    if len(sys.argv) > 1:
+        my_host, my_port = "192.168.90.100", 8007
+        # my_host, my_port = sys.argv[1], int(sys.argv[2])
+    else:
+        my_host, my_port = "192.168.90.100", 8007
     # 多线程服务器
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
     # 实例化 计算len的类
-    servicer = Lock_Server()
+    servicer = Lock_Server(my_host, my_port)
     # 注册本地服务,方法ComputeServicer只有这个是变的
     Distribute_pb2_grpc.add_Lock_ServerServicer_to_server(servicer, server)
     # 监听端口
-    server.add_insecure_port('127.0.0.1:19999')
+    # server.add_insecure_port('127.0.0.1:19999')
+    server.add_insecure_port('{}:{}'.format(servicer.HOST, servicer.PORT))
     # 开始接收请求进行服务
     server.start()
     # 使用 ctrl+c 可以退出服务
