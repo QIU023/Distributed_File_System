@@ -1,5 +1,5 @@
 # -*-coding:utf-8-*-
-# 编辑者:XuZH
+# 编辑者：QiuYQ, XuZH
 import grpc
 import Distribute_pb2
 import Distribute_pb2_grpc
@@ -119,10 +119,9 @@ class Lock_Server(Distribute_pb2_grpc.Lock_ServerServicer):
     
 def main():
     if len(sys.argv) > 1:
-        my_host, my_port = "192.168.90.100", 8007
-        #my_host, my_port = sys.argv[1], int(sys.argv[2])
+        my_host, my_port = sys.argv[1], int(sys.argv[2])
     else:
-        my_host, my_port = "192.168.90.100", 8007
+        my_host, my_port = "127.0.0.1", 8007
     # 多线程服务器
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
     # 实例化 计算len的类
