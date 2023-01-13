@@ -88,7 +88,7 @@ class Direct_Server(Distribute_pb2_grpc.Direct_ServerServicer):
         print("被调用了")
         #self.CREATE_HEADER
         if re.match("CREATE_FILE", request.message):
-            print(request)
+            # print(request)
             self.get_slaves(request=request,context=context)
             '''
             with grpc.insecure_channel("{0}:{1}".format(self.DIR_HOST, self.DIR_PORT)) as channel:
@@ -428,7 +428,11 @@ class Direct_Server(Distribute_pb2_grpc.Direct_ServerServicer):
 
 
 def main():
+<<<<<<< HEAD
     my_host, my_port = "192.168.100.41", 8005
+=======
+    my_host, my_port = "192.168.90.100", 8005
+>>>>>>> e21c0e6753f124fb163817fd4e4d341015349fd3
     '''
     if len(sys.argv) > 1:
         my_host, my_port = "192.168.90.100", 8005
