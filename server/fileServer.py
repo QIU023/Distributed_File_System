@@ -234,14 +234,14 @@ class File_Server(Distribute_pb2_grpc.File_ServerServicer):
 
 
 def main():
-    my_host, my_port = "192.168.100.41", 8006
-    '''
+    # my_host, my_port = "192.168.100.41", 8006
+    
     if len(sys.argv) > 1:
-        my_host, my_port = "192.168.90.100", 8006
-        #my_host, my_port = sys.argv[1], int(sys.argv[2])
+        # my_host, my_port = "192.168.90.100", 8006
+        my_host, my_port = sys.argv[1], int(sys.argv[2])
     else:
         raise NotImplementedError("Please specify the host and port in the command line, begin from 8010!")   
-    '''
+    
 
     # 多线程服务器
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
