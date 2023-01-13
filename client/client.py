@@ -18,7 +18,7 @@ from LRU_cache import TwoQueue_Cache
 class Client:
     #本主机号码和端口
     PORT = 8000
-    HOST = "192.168.90.100"
+    HOST = "192.168.100.41"
 
     # redis 缓存的参数：端口号、密码、设置的大小（64MB）
     LOCAL_REDIS_PORT = 8008
@@ -38,6 +38,8 @@ class Client:
     LOCK_RESPONSE = "LOCK_RESPONSE: \nFILENAME: .*\nTIME: .*\n\n"
     FAIL_RESPONSE = "ERROR: .*\nMESSAGE: .*\n\n"
     UNLOCK_HEADER = "UNLOCK_FILE: %s\nUNLOCK_TYPE: %s\n\n"
+    CREATE_HEADER = "CREATE_FILE: %s\n\n"
+    DELETE_HEADER = "DELETE_FILE: %s\n\n"
 
     REQUEST = "%s"
     LENGTH = 4096
@@ -104,7 +106,7 @@ class Client:
                     open_file = params[2].split()[1]
                     # Get lock on file before downloading
                     self.__lock_file(filename, access_type, 10)
-                    file_downloaded, data = self.__download_file(server, port, open_file)
+                    file_downloaded, data = self.__download_file(filename)
                     if file_downloaded:
                         # print("getting file from the server!")
                         self.open_files[filename] = open_file
@@ -138,7 +140,7 @@ class Client:
                     server = params[0].split()[1]
                     open_file = params[2].split()[1]
                     # Upload the file and
-                    file_uploaded = self.__upload_file(server, open_file)
+                    file_uploaded = self.__upload_file(filename)
                     if file_uploaded:
                         # path = os.path.join(self.CLIENT_ROOT, self.BUCKET_NAME)
                         # path = os.path.join(path, self.open_files[filename])
@@ -157,24 +159,30 @@ class Client:
     # 读文件
     def read(self, filename):
         """Function that reads from an open file"""
-        if filename in self.open_files.keys():
-            local_name = self.open_files[filename]
-            path = os.path.join(self.BUCKET_LOCATION, local_name)
-            file_handle = open(path, "rb")
-            data = file_handle.read()
-            return data
-        return None
+        '''
+        if filename not in self.open_files.keys():
+            self.__download_file(filename)
+        '''
+        self.open(filename)
+        local_name = self.open_files[filename]
+        path = os.path.join(self.BUCKET_LOCATION, local_name)
+        file_handle = open(path, "rb")
+        data = file_handle.read()
+        self.close(filename)
+        return data
 
     # 写文件
     def write(self, filename, data):
         """Function that writes to an open file"""
         success = False
+        self.open(filename,"write")
         if filename in self.open_files.keys():
             local_name = self.open_files[filename]
             path = os.path.join(self.BUCKET_LOCATION, local_name)
             file_handle = open(path, "wb+")
             file_handle.write(data)
             success = True
+        self.close(filename,"write")
         return success
 
     # 上传
@@ -210,7 +218,7 @@ class Client:
         data = base64.b64decode(data)
         file_handle = open(path, "wb+")
         file_handle.write(data)
-        return True, data
+        return True
 
     # 获取服务器
     def __get_directory(self, filename):
@@ -264,36 +272,37 @@ class Client:
 
     # 判断文件名是否已经重名
     def Is_in(self, filename):
+        return False
         if not self.__get_directory(filename):
             return False
         return True
 
-    # 创建文件（不完善）
+    # 创建文件
     def create_file(self, filename):
         """创建空文件并让Server创建同名文件"""
         if not self.Is_in(filename):
-            full_path = '\\'.join(self.BUCKET_LOCATION)
+            full_path = os.path.join(self.BUCKET_LOCATION,filename)
             newfile = open(full_path, 'w')
             newfile.close()
             #有个情况，都是一句filename来找的，如果
-            '''
-            request = self.__get_directory(filename)
-            if re.match(self.SERVER_RESPONSE, request):
-                # Remove lock from file
-                self.__unlock_file(filename)
-                params = request.splitlines()
-                server = params[0].split()[1]
-                open_file = params[2].split()[1]
-                # Upload the file and
-                file_uploaded = self.__upload_file(server, open_file)
-            '''
-            self.__upload_file(filename)
+            request = self.CREATE_HEADER % (filename)
+            with grpc.insecure_channel("{0}:{1}".format(self.HOST, "8005")) as channel:
+                dir_cil = Distribute_pb2_grpc.Direct_ServerStub(channel=channel)
+                response = dir_cil.get_server(Distribute_pb2.dir_request(message=request))
             return True
         return False
 
     #删除文件
     def delete_file(self,filename):
-        pass
+        if self.Is_in(filename):
+            full_path = os.path.join(self.BUCKET_LOCATION,filename)
+            os.remove(full_path)
+            request = self.DELETE_HEADER % (filename)
+            with grpc.insecure_channel("{0}:{1}".format(self.HOST, 8005)) as channel:
+                dir_cil = Distribute_pb2_grpc.Direct_ServerStub(channel=channel)
+                response = dir_cil.get_server(Distribute_pb2.dir_request(message=request))
+            return True
+        return False
 
     # 列出文件
     def list_files(self):

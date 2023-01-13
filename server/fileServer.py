@@ -1,5 +1,5 @@
 # -*-coding:utf-8-*-
-# 编辑者：QiuYQ, XuZH
+# 编辑者:XuZH
 import socket
 import os
 import re
@@ -74,9 +74,6 @@ class File_Server(Distribute_pb2_grpc.File_ServerServicer):
         while (len(self.access_count) > 0 and \
                self.access_count[0] < curr_time - self.access_stat_interval):
             del self.access_count[0]
-
-    def send_bare_info(self, request, context):
-        return Distribute_pb2.file_reply(result=request.message)
 
     # 被调用的功能函数
     def upload_file(self, request, context):
@@ -237,10 +234,15 @@ class File_Server(Distribute_pb2_grpc.File_ServerServicer):
 
 
 def main():
+    my_host, my_port = "192.168.100.41", 8006
+    '''
     if len(sys.argv) > 1:
-        my_host, my_port = sys.argv[1], int(sys.argv[2])
+        my_host, my_port = "192.168.90.100", 8006
+        #my_host, my_port = sys.argv[1], int(sys.argv[2])
     else:
-        raise NotImplementedError("Please specify the host and port in the command line, begin from 8010!")
+        raise NotImplementedError("Please specify the host and port in the command line, begin from 8010!")   
+    '''
+
     # 多线程服务器
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
     # 实例化 计算len的类

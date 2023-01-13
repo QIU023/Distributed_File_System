@@ -1,5 +1,5 @@
 # -*-coding:utf-8-*-
-# 编辑者：QiuYQ, XuZH
+# 编辑者:XuZH
 import grpc
 import Distribute_pb2
 import Distribute_pb2_grpc
@@ -17,6 +17,7 @@ class Lock_Server(Distribute_pb2_grpc.Lock_ServerServicer):
     LOCK_RESPONSE = "LOCK_RESPONSE: \nLOCK_TYPE: \nFILENAME: %s\nTIME: %d\n\n"
     FAIL_RESPONSE = "ERROR: %d\nMESSAGE: %s\n\n"
     DATABASE = "Database/lock.db"
+
     # 差个__init__
 
     def __init__(self, my_host, my_port):
@@ -99,7 +100,7 @@ class Lock_Server(Distribute_pb2_grpc.Lock_ServerServicer):
         cur = con.cursor()
         cur.execute("SELECT count(*) FROM Locks WHERE Path = ? AND Time > ?", (path, current_time))
         count = cur.fetchone()[0]
-        #曾经是is
+        # 曾经是is
         if count == 0:
             cur.execute("UPDATE Locks SET Time=? WHERE Path = ? AND Time > ?", (current_time, path, current_time))
         # End r/w access to the db
@@ -116,12 +117,14 @@ class Lock_Server(Distribute_pb2_grpc.Lock_ServerServicer):
             cur.execute("CREATE TABLE IF NOT EXISTS Locks(Id INTEGER PRIMARY KEY, Path TEXT, Time INT)")
             cur.execute("CREATE INDEX IF NOT EXISTS PATHS ON Locks(Path)")
     '''
-    
+
+
 def main():
     if len(sys.argv) > 1:
-        my_host, my_port = sys.argv[1], int(sys.argv[2])
+        my_host, my_port = "192.168.100.41", 8007
+        # my_host, my_port = sys.argv[1], int(sys.argv[2])
     else:
-        my_host, my_port = "127.0.0.1", 8007
+        my_host, my_port = "192.168.100.41", 8007
     # 多线程服务器
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
     # 实例化 计算len的类
